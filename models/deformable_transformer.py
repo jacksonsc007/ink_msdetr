@@ -141,7 +141,6 @@ class DeformableTransformer(nn.Module):
         dec_tgt, 
         dec_reference_points, 
         dec_query_pos, 
-        dec_query_embed,
         # common part
         spatial_shapes, 
         level_start_index, 
@@ -150,50 +149,12 @@ class DeformableTransformer(nn.Module):
         ):
         memory = self.encoder.cascade_stage_forward(stage_idx, enc_src, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
 
-        init_reference_out = None
-        # prepare input for 1st decoder stage
-        if stage_idx == 0:
-            bs, _, c = memory.shape
-            if self.two_stage:
-                output_memory, output_proposals = self.gen_encoder_output_proposals(memory, enc_padding_mask, spatial_shapes)
-
-                # hack implementation for two-stage Deformable DETR
-                enc_outputs_class = self.decoder.class_embed[self.decoder.num_layers](output_memory)
-                enc_outputs_coord_unact = self.decoder.bbox_embed[self.decoder.num_layers](output_memory) + output_proposals
-
-                topk = self.two_stage_num_proposals
-                topk_proposals = torch.topk(enc_outputs_class[..., 0], topk, dim=1)[1]
-                topk_coords_unact = torch.gather(enc_outputs_coord_unact, 1, topk_proposals.unsqueeze(-1).repeat(1, 1, 4))
-                topk_coords_unact = topk_coords_unact.detach()
-                reference_points = topk_coords_unact.sigmoid()
-                init_reference_out = reference_points
-                pos_trans_out = self.pos_trans_norm(self.pos_trans(self.get_proposal_pos_embed(topk_coords_unact)))
-
-                if not self.mixed_selection:
-                    query_embed, tgt = torch.split(pos_trans_out, c, dim=2)
-                else:
-                    # tgt: content embedding, query_embed here is the learnable content embedding
-                    tgt = query_embed.unsqueeze(0).expand(bs, -1, -1)
-                    # query_embed: position embedding, transformed from the topk proposals
-                    query_embed, _ = torch.split(pos_trans_out, c, dim=2)
-
-            else:
-                query_embed, tgt = torch.split(dec_query_embed, c, dim=1)
-                query_embed = query_embed.unsqueeze(0).expand(bs, -1, -1)
-                tgt = tgt.unsqueeze(0).expand(bs, -1, -1)
-                reference_points = self.reference_points(query_embed).sigmoid()
-                init_reference_out = reference_points
-            dec_tgt = tgt
-            dec_query_pos = query_embed
-            dec_reference_points = reference_points
-
         # decoder
-        dec_hs_o2o, dec_hs_o2m, dec_query_pos, dec_ref, dec_new_ref= \
+        dec_hs_o2o, dec_hs_o2m, dec_ref, dec_new_ref= \
             self.decoder.cascade_stage_forward(stage_idx, dec_tgt, dec_reference_points, memory,
                 spatial_shapes, level_start_index, valid_ratios, dec_query_pos, enc_padding_mask, **kwargs)
         
-        return memory, dec_hs_o2o, dec_hs_o2m, dec_query_pos, dec_ref, dec_new_ref, \
-                init_reference_out, enc_outputs_class, enc_outputs_coord_unact, output_proposals
+        return memory, dec_hs_o2o, dec_hs_o2m, dec_query_pos, dec_ref, dec_new_ref
 
          
 
@@ -223,95 +184,21 @@ class DeformableTransformer(nn.Module):
         level_start_index = torch.cat((spatial_shapes.new_zeros((1, )), spatial_shapes.prod(1).cumsum(0)[:-1]))
         valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks], 1)
 
-        # ===================== Start cascade stage =====================
+        # ===================== Start cascade detection stage =====================
         hs_o2o = []
         hs_o2m = [] 
         inter_references = []
         memory = src_flatten
-        dec_query_pos = None
-
-        # hack implementation
-        init_reference_out = []
-        enc_outputs_class = []
-        enc_outputs_coord_unact = []
-        output_proposals = []
+        enc_pos = lvl_pos_embed_flatten
+        enc_padding_mask = mask_flatten
         enc_reference_points = self.encoder.get_reference_points(spatial_shapes, valid_ratios, device=src_flatten.device)
-        for stage_idx in range(self.num_detection_stages):
-            memory, dec_query_o2o, dec_query_o2m, dec_query_pos, dec_ref, dec_new_ref, \
-            dec_init_ref, enc_output_cls, enc_output_cor, output_proposal= self.cascade_stage(
-                stage_idx,
-                # encoder part
-                enc_src=memory, 
-                enc_reference_points=enc_reference_points, 
-                enc_pos=lvl_pos_embed_flatten, 
-                enc_padding_mask=mask_flatten,
-                # decoder part
-                dec_tgt=dec_query_o2o, 
-                dec_reference_points=dec_ref, 
-                dec_query_pos=dec_query_pos, 
-                dec_query_embed=query_embed,
-                # common part
-                spatial_shapes=spatial_shapes, 
-                level_start_index=level_start_index, 
-                valid_ratios=valid_ratios,
-                **kwargs
-            ) 
 
-            hs_o2o.append(dec_query_o2o)
-            hs_o2m.append(dec_query_o2m)
-            inter_references.append(dec_new_ref if self.decoder.look_forward_twice else dec_ref)
-            init_reference_out.append(dec_init_ref)
-            enc_outputs_class.append(enc_output_cls)
-            enc_outputs_coord_unact.append(enc_output_cor)
-            output_proposals.append(output_proposal)
-
-        # hack implementation
-        init_reference_out = init_reference_out[0]
-        enc_outputs_class = enc_outputs_class[0]
-        enc_outputs_coord_unact = enc_outputs_coord_unact[0]
-        output_proposals = output_proposals[0]
-
-        inter_references = torch.stack(inter_references)
-        hs_o2m = torch.stack(hs_o2m)
-        hs_o2o = torch.stack(hs_o2o)
-        inter_references_out = inter_references
-        # ===================== End cascade stage =====================
-        if self.two_stage:
-            return hs_o2o, hs_o2m, init_reference_out, inter_references_out, enc_outputs_class, enc_outputs_coord_unact, output_proposals.sigmoid(),
-        return hs_o2o, hs_o2m, init_reference_out, inter_references_out, None, None, output_proposals.sigmoid(),
-    def forward(self, srcs, masks, pos_embeds, query_embed=None, **kwargs):
-        assert self.two_stage or query_embed is not None
-
-        # prepare input for encoder
-        src_flatten = []
-        mask_flatten = []
-        lvl_pos_embed_flatten = []
-        spatial_shapes = []
-        for lvl, (src, mask, pos_embed) in enumerate(zip(srcs, masks, pos_embeds)):
-            bs, c, h, w = src.shape
-            spatial_shape = (h, w)
-            spatial_shapes.append(spatial_shape)
-            src = src.flatten(2).transpose(1, 2)
-            mask = mask.flatten(1)
-            pos_embed = pos_embed.flatten(2).transpose(1, 2)
-            lvl_pos_embed = pos_embed + self.level_embed[lvl].view(1, 1, -1)
-            lvl_pos_embed_flatten.append(lvl_pos_embed)
-            src_flatten.append(src)
-            mask_flatten.append(mask)
-        src_flatten = torch.cat(src_flatten, 1)
-        mask_flatten = torch.cat(mask_flatten, 1)
-        lvl_pos_embed_flatten = torch.cat(lvl_pos_embed_flatten, 1)
-        spatial_shapes = torch.as_tensor(spatial_shapes, dtype=torch.long, device=src_flatten.device)
-        level_start_index = torch.cat((spatial_shapes.new_zeros((1, )), spatial_shapes.prod(1).cumsum(0)[:-1]))
-        valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks], 1)
-
-        # encoder
-        memory = self.encoder(src_flatten, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
-
-        # prepare input for decoder
+        # >>===================== Start 1st detection stage=====================
+        memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
+        # prepare input for 1st decoder stage
         bs, _, c = memory.shape
         if self.two_stage:
-            output_memory, output_proposals = self.gen_encoder_output_proposals(memory, mask_flatten, spatial_shapes)
+            output_memory, output_proposals = self.gen_encoder_output_proposals(memory, enc_padding_mask, spatial_shapes)
 
             # hack implementation for two-stage Deformable DETR
             enc_outputs_class = self.decoder.class_embed[self.decoder.num_layers](output_memory)
@@ -339,12 +226,50 @@ class DeformableTransformer(nn.Module):
             tgt = tgt.unsqueeze(0).expand(bs, -1, -1)
             reference_points = self.reference_points(query_embed).sigmoid()
             init_reference_out = reference_points
-
+        dec_tgt = tgt
+        dec_query_pos = query_embed
+        dec_reference_points = reference_points
         # decoder
-        hs_o2o, hs_o2m, inter_references = self.decoder(tgt, reference_points, memory,
-                                            spatial_shapes, level_start_index, valid_ratios, query_embed, mask_flatten, **kwargs)
+        dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref= \
+            self.decoder.cascade_stage_forward(0, dec_tgt, dec_reference_points, memory,
+                spatial_shapes, level_start_index, valid_ratios, dec_query_pos, enc_padding_mask, **kwargs)
 
+        hs_o2o.append(dec_query_o2o)
+        hs_o2m.append(dec_query_o2m)
+        inter_references.append(dec_new_ref if self.decoder.look_forward_twice else dec_ref)
+        # >>===================== End 1st detection stage=====================
+
+        # >>===================== Start following detection stage=====================
+        for stage_idx in range(1, self.num_detection_stages):
+            memory, dec_query_o2o, dec_query_o2m, dec_query_pos, dec_ref, dec_new_ref = \
+                self.cascade_stage(
+                    stage_idx,
+                    # encoder part
+                    enc_src=memory, 
+                    enc_reference_points=enc_reference_points, 
+                    enc_pos=enc_pos, 
+                    enc_padding_mask=enc_padding_mask,
+                    # decoder part
+                    dec_tgt=dec_query_o2o, 
+                    dec_reference_points=dec_ref, 
+                    dec_query_pos=dec_query_pos, 
+                    # common part
+                    spatial_shapes=spatial_shapes, 
+                    level_start_index=level_start_index, 
+                    valid_ratios=valid_ratios,
+                    **kwargs
+                ) 
+
+            hs_o2o.append(dec_query_o2o)
+            hs_o2m.append(dec_query_o2m)
+            inter_references.append(dec_new_ref if self.decoder.look_forward_twice else dec_ref)
+
+        inter_references = torch.stack(inter_references)
+        hs_o2m = torch.stack(hs_o2m)
+        hs_o2o = torch.stack(hs_o2o)
         inter_references_out = inter_references
+        # >>===================== End following detection stage=====================
+        # ===================== End cascade detection stage =====================
         if self.two_stage:
             return hs_o2o, hs_o2m, init_reference_out, inter_references_out, enc_outputs_class, enc_outputs_coord_unact, output_proposals.sigmoid(),
         return hs_o2o, hs_o2m, init_reference_out, inter_references_out, None, None, output_proposals.sigmoid(),
@@ -602,9 +527,9 @@ class DeformableTransformerDecoder(nn.Module):
 
         assert self.return_intermediate, "cascade detection requires return_intermediate."
         if self.look_forward_twice:
-            return output, output_o2m, query_pos, reference_points, new_reference_points
+            return output, output_o2m, reference_points, new_reference_points
         else:
-            return output, output_o2m, query_pos, reference_points, None
+            return output, output_o2m, reference_points, None
 
 
 def _get_clones(module, N):
