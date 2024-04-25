@@ -154,7 +154,7 @@ class DeformableTransformer(nn.Module):
             self.decoder.cascade_stage_forward(stage_idx, dec_tgt, dec_reference_points, memory,
                 spatial_shapes, level_start_index, valid_ratios, dec_query_pos, enc_padding_mask, **kwargs)
         
-        return memory, dec_hs_o2o, dec_hs_o2m, dec_query_pos, dec_ref, dec_new_ref
+        return memory, dec_hs_o2o, dec_hs_o2m, dec_ref, dec_new_ref
 
          
 
@@ -241,7 +241,7 @@ class DeformableTransformer(nn.Module):
 
         # >>===================== Start following detection stage=====================
         for stage_idx in range(1, self.num_detection_stages):
-            memory, dec_query_o2o, dec_query_o2m, dec_query_pos, dec_ref, dec_new_ref = \
+            memory, dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref = \
                 self.cascade_stage(
                     stage_idx,
                     # encoder part
