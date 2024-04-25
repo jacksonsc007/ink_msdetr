@@ -5,8 +5,9 @@ num_enc_layers=3
 num_dec_layers=3
 dataset=minicoco
 batch_size=4
+code_version="1.5.10.1"
 
-EXP_DIR=exps/${dataset}-cascade-msdetr_enc${num_enc_layers}_dec${num_dec_layers}-bs${batch_size}
+EXP_DIR=exps/${dataset}-${code_version}-cascade_msdetr_enc${num_enc_layers}_dec${num_dec_layers}-bs${batch_size}
 
 mkdir -p $EXP_DIR
 
@@ -35,3 +36,5 @@ GPUS_PER_NODE=$num_gpus ./tools/run_dist_launch.sh $num_gpus python -u main.py \
    --enc_bbox_loss_coef 5 \
    --enc_giou_loss_coef 2 \
    2>&1 | tee $EXP_DIR/train.log
+
+
