@@ -61,14 +61,6 @@ class DeformableTransformer(nn.Module):
 
         self.num_detection_stages = len( self.encoder.layers )
         assert self.num_detection_stages == len( self.decoder.layers )
-        self.align_proj = nn.ModuleList()
-        for stage_id in range(1, self.num_detection_stages+1):
-            self.align_proj.append(
-                nn.Sequential(
-                    nn.Linear( self.d_model * (stage_id + 1), self.d_model, bias=False),
-                    nn.LayerNorm( self.d_model )
-                )
-            )
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -153,21 +145,16 @@ class DeformableTransformer(nn.Module):
         spatial_shapes, 
         level_start_index, 
         valid_ratios,
-        # align,
-        memory_history,
         **kwargs
         ):
         memory = self.encoder.cascade_stage_forward(stage_idx, enc_src, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
 
-        # align memory semantics
-        memory_history = torch.cat( [memory_history, memory], dim=2 )
-        aligned_memory = self.align_proj[stage_idx]( memory_history)
         # decoder
         dec_hs_o2o, dec_hs_o2m, dec_ref, dec_new_ref= \
-            self.decoder.cascade_stage_forward(stage_idx, dec_tgt, dec_reference_points, aligned_memory,
+            self.decoder.cascade_stage_forward(stage_idx, dec_tgt, dec_reference_points, memory,
                 spatial_shapes, level_start_index, valid_ratios, dec_query_pos, enc_padding_mask, **kwargs)
         
-        return memory, dec_hs_o2o, dec_hs_o2m, dec_ref, dec_new_ref, memory_history
+        return memory, dec_hs_o2o, dec_hs_o2m, dec_ref, dec_new_ref
 
          
 
@@ -205,8 +192,6 @@ class DeformableTransformer(nn.Module):
         enc_pos = lvl_pos_embed_flatten
         enc_padding_mask = mask_flatten
         enc_reference_points = self.encoder.get_reference_points(spatial_shapes, valid_ratios, device=src_flatten.device)
-        # record input for 1st encoder layer
-        memory_history = memory
 
         # >>===================== Start 1st detection stage=====================
         memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
@@ -241,16 +226,12 @@ class DeformableTransformer(nn.Module):
             tgt = tgt.unsqueeze(0).expand(bs, -1, -1)
             reference_points = self.reference_points(query_embed).sigmoid()
             init_reference_out = reference_points
-        # align encoder memory
-        memory_history = torch.cat([ memory_history, memory ], dim=2)
-        aligned_memory = self.align_proj[0](memory_history)
-
-        # decoder
         dec_tgt = tgt
         dec_query_pos = query_embed
         dec_reference_points = reference_points
+        # decoder
         dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref= \
-            self.decoder.cascade_stage_forward(0, dec_tgt, dec_reference_points, aligned_memory,
+            self.decoder.cascade_stage_forward(0, dec_tgt, dec_reference_points, memory,
                 spatial_shapes, level_start_index, valid_ratios, dec_query_pos, enc_padding_mask, **kwargs)
 
         hs_o2o.append(dec_query_o2o)
@@ -260,8 +241,7 @@ class DeformableTransformer(nn.Module):
 
         # >>===================== Start following detection stage=====================
         for stage_idx in range(1, self.num_detection_stages):
-            memory, dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref, \
-                memory_history = \
+            memory, dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref = \
                 self.cascade_stage(
                     stage_idx,
                     # encoder part
@@ -277,8 +257,6 @@ class DeformableTransformer(nn.Module):
                     spatial_shapes=spatial_shapes, 
                     level_start_index=level_start_index, 
                     valid_ratios=valid_ratios,
-                    # align 
-                    memory_history=memory_history,
                     **kwargs
                 ) 
 
