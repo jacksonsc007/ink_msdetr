@@ -6,11 +6,12 @@ num_dec_layers=3
 dataset=minicoco
 batch_size=4
 branch_name="deformable_attention_variant"
-code_version="1.0.2"
+code_version="1.3.1"
 
 EXP_DIR=exps/${dataset}-${branch_name}_${code_version}-cascade_msdetr_enc${num_enc_layers}_dec${num_dec_layers}-bs${batch_size}
 
 mkdir -p $EXP_DIR
+cp -r models $EXP_DIR
 
 GPUS_PER_NODE=$num_gpus ./tools/run_dist_launch.sh $num_gpus python -u main.py \
    --lr 5e-5 \
