@@ -4,6 +4,9 @@ Drawing from the working from Dndetr, to improve Msdetr.
 # branch: cascade-dndetr
 ### 1.5.10.1
 
+### repvgg
+
+
 
 # branch: deformable-attention-variant
 ### v1.0.2

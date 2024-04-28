@@ -31,7 +31,7 @@ from .segmentation import (DETRsegm, PostProcessPanoptic, PostProcessSegm,
 from .deformable_transformer import build_deforamble_transformer
 
 from .matcher_o2m import Stage2Assigner
-from .aligner import MultiScaleAligner_v1510 as MultiScaleAligner
+from .repnet import RepVGGPluXNetwork as MultiScaleAligner
 
 def _get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
@@ -121,12 +121,13 @@ class DeformableDETR(nn.Module):
             self.transformer.decoder.class_embed = self.class_embed
             for box_embed in self.bbox_embed:
                 nn.init.constant_(box_embed.layers[-1].bias.data[2:], 0.0)
-        embed_dim = self.transformer.d_model
+        self.embed_dim = self.transformer.d_model
         self.MultiScaleAligner = MultiScaleAligner(
-            num_levels=self.num_feature_levels,
-            norm_type="GN",
-            in_channels=embed_dim,
-            out_channels=embed_dim
+            in_channels_list= [self.embed_dim] * 4,
+            out_channels_list=[self.embed_dim] * 4,
+            norm_layer=nn.BatchNorm2d,
+            activation=nn.SiLU,
+            groups=4,
         )
 
     def forward(self, samples: NestedTensor):
@@ -173,7 +174,11 @@ class DeformableDETR(nn.Module):
         if not self.two_stage or self.mixed_selection:
             query_embeds = self.query_embed.weight
 
+        srcs = dict(
+            (i, lvl_feat) for i, lvl_feat in enumerate(srcs)
+        )
         srcs = self.MultiScaleAligner(srcs)
+        srcs = list( srcs.values() )
         hs, hs_o2m, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, anchors = self.transformer(srcs, masks, pos, query_embeds)
 
         outputs_classes = []
