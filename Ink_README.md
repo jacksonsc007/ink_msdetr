@@ -6,6 +6,8 @@ Drawing from the working from Dndetr, to improve Msdetr.
 
 ### repvgg
 
+#### repvgg-1group
+We set the number of RepVggPluXBlock to 1. The default is 3.
 
 
 # branch: deformable-attention-variant

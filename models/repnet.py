@@ -68,7 +68,7 @@ class CSPRepPluXLayer(nn.Module):
         self,
         in_channels: int,
         out_channels: int,
-        num_blocks: int = 3,
+        num_blocks: int = 1,
         expansion: float = 1.0,
         groups: int = 4,
         norm_layer: nn.Module = nn.BatchNorm2d,
