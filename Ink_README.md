@@ -24,3 +24,6 @@ We set the number of RepVggPluXBlock to 1. The default is 3.
 
 ### v1.5.1
 Combine v1.0.2 in branch deformable-attention-variant & v1.5.10.1 in branch cascade-dndetr.
+
+### v1.5.2
+Combine v1.0.2 in branch deformable-attention-variant & v1.7.3.2 in branch cascade-dndetr.
