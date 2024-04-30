@@ -31,7 +31,7 @@ from .segmentation import (DETRsegm, PostProcessPanoptic, PostProcessSegm,
 from .deformable_transformer import build_deforamble_transformer
 
 from .matcher_o2m import Stage2Assigner
-from .aligner import MultiScaleAligner_v1734 as MultiScaleAligner
+from .aligner import MultiScaleAligner_v1732 as MultiScaleAligner
 
 def _get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])

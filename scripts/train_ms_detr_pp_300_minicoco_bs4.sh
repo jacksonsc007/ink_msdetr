@@ -6,7 +6,7 @@ num_dec_layers=3
 dataset=minicoco
 batch_size=4
 branch_name="cascade_msdetr"
-code_version="1.7.3.4"
+code_version="1.7.3.2"
 
 EXP_DIR=exps/${dataset}-${branch_name}_${code_version}-cascade_msdetr_enc${num_enc_layers}_dec${num_dec_layers}-bs${batch_size}
 

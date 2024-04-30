@@ -11,6 +11,8 @@ We set the number of RepVggPluXBlock to 1. The default is 3.
 
 #### 1.7.3.4
 
+#### 1.7.3.2
+
 
 # branch: deformable-attention-variant
 ### v1.0.2
