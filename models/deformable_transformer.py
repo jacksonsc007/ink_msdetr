@@ -19,6 +19,7 @@ from torch.nn.init import xavier_uniform_, constant_, uniform_, normal_
 from util.misc import inverse_sigmoid
 from models.ops.modules import MSDeformAttn
 # from config import *
+from .aligner import MultiScaleAligner_v1732 as MultiScaleAligner
 
 
 class DeformableTransformer(nn.Module):
@@ -61,6 +62,14 @@ class DeformableTransformer(nn.Module):
 
         self.num_detection_stages = len( self.encoder.layers )
         assert self.num_detection_stages == len( self.decoder.layers )
+
+        aligner = MultiScaleAligner(
+            num_levels=num_feature_levels,
+            norm_type="GN",
+            in_channels=self.d_model,
+            out_channels=self.d_model
+        )
+        self.multi_scale_aligner = nn.ModuleList([copy.deepcopy(aligner) for _ in range(self.num_detection_stages)])
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -149,6 +158,20 @@ class DeformableTransformer(nn.Module):
         ):
         memory = self.encoder.cascade_stage_forward(stage_idx, enc_src, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
 
+        bs, _, c_dim = memory.shape
+        multi_lvl_memory_list = memory.split(spatial_shapes.prod(-1).tolist(), dim=1)
+        multi_lvl_memory_list = [
+            x.permute(0, 2, 1).reshape(bs, c_dim, h, w)
+            for x, (h, w) in zip(multi_lvl_memory_list, spatial_shapes.tolist())
+        ]
+        multi_lvl_memory_list = self.multi_scale_aligner[stage_idx](multi_lvl_memory_list)
+        multi_lvl_memory_list = [
+            x.permute(0, 2, 3, 1).reshape(bs, h * w, c_dim)
+            for x, (h, w) in zip(multi_lvl_memory_list, spatial_shapes.tolist())
+        ]
+        memory = torch.cat(multi_lvl_memory_list, dim=1)
+
+
         # decoder
         dec_hs_o2o, dec_hs_o2m, dec_ref, dec_new_ref= \
             self.decoder.cascade_stage_forward(stage_idx, dec_tgt, dec_reference_points, memory,
@@ -229,6 +252,21 @@ class DeformableTransformer(nn.Module):
         dec_tgt = tgt
         dec_query_pos = query_embed
         dec_reference_points = reference_points
+        
+        # align multi level features
+        bs, _, c_dim = memory.shape
+        multi_lvl_memory_list = memory.split(spatial_shapes.prod(-1).tolist(), dim=1)
+        multi_lvl_memory_list = [
+            x.permute(0, 2, 1).reshape(bs, c_dim, h, w)
+            for x, (h, w) in zip(multi_lvl_memory_list, spatial_shapes.tolist())
+        ]
+        multi_lvl_memory_list = self.multi_scale_aligner[0](multi_lvl_memory_list)
+        multi_lvl_memory_list = [
+            x.permute(0, 2, 3, 1).reshape(bs, h * w, c_dim)
+            for x, (h, w) in zip(multi_lvl_memory_list, spatial_shapes.tolist())
+        ]
+        memory = torch.cat(multi_lvl_memory_list, dim=1)
+        
         # decoder
         dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref= \
             self.decoder.cascade_stage_forward(0, dec_tgt, dec_reference_points, memory,

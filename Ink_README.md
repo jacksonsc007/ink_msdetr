@@ -27,3 +27,6 @@ Combine v1.0.2 in branch deformable-attention-variant & v1.5.10.1 in branch casc
 
 ### v1.5.2
 Combine v1.0.2 in branch deformable-attention-variant & v1.7.3.2 in branch cascade-dndetr.
+
+### v1.5.3
+On the basis of v1.5.2, we apply multi_scale_aligner to each detection stage.
