@@ -65,10 +65,13 @@ class DeformableTransformer(nn.Module):
         self.stage_align_layers = nn.ModuleList()
         for i in range( self.num_detection_stages ):
             self.stage_align_layers.append( 
-                nn.Linear( 
-                    d_model * (i + 2), 
-                    d_model 
-                ) 
+                nn.Sequential(
+                    nn.Linear( 
+                        d_model * (i + 2), 
+                        d_model 
+                    ),
+                    nn.LayerNorm(d_model) 
+                )
             )
 
     def _reset_parameters(self):
