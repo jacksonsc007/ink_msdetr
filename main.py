@@ -142,6 +142,7 @@ def get_args_parser():
     parser.add_argument('--enc_giou_loss_coef', default=2, type=float)
     parser.add_argument('--topk_eval', default=100, type=int)
     parser.add_argument('--nms_iou_threshold', default=None, type=float)
+    parser.add_argument('--wandb_name', default="msdetr_exp", type=str)
     
     return parser
 
@@ -298,7 +299,7 @@ def main(args):
             "dataset": "minicoco",
             "epochs": args.epochs,
             },
-            # name="msdetr_wandb_test"
+            name=args.wandb_name
         )
 
     print("Start training")
