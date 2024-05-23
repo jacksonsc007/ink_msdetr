@@ -25,7 +25,7 @@ import datasets.samplers as samplers
 from datasets import build_dataset, get_coco_api_from_dataset
 from engine import evaluate, train_one_epoch
 from models import build_model
-
+import wandb
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Deformable DETR Detector', add_help=False)
@@ -142,6 +142,7 @@ def get_args_parser():
     parser.add_argument('--enc_giou_loss_coef', default=2, type=float)
     parser.add_argument('--topk_eval', default=100, type=int)
     parser.add_argument('--nms_iou_threshold', default=None, type=float)
+    parser.add_argument('--wandb_name', default="msdetr_exp", type=str)
     
     return parser
 
@@ -287,6 +288,20 @@ def main(args):
             utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
         return
 
+    if utils.is_main_process():
+        # wandb logger
+        wandb.init(
+            # set the wandb project where this run will be logged
+            project="MSDETR",
+
+            # track hyperparameters and run metadata
+            config={
+            "dataset": "minicoco",
+            "epochs": args.epochs,
+            },
+            name=args.wandb_name
+        )
+
     print("Start training")
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
@@ -318,6 +333,8 @@ def main(args):
                      'epoch': epoch,
                      'n_parameters': n_parameters}
 
+
+
         if args.output_dir and utils.is_main_process():
             with (output_dir / "log.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
@@ -332,10 +349,21 @@ def main(args):
                     for name in filenames:
                         torch.save(coco_evaluator.coco_eval["bbox"].eval,
                                    output_dir / "eval" / name)
+            coco_eval_bbox_metric = test_stats["coco_eval_bbox"]
+            fields = ["AP", "AP50", "AP75", "APs", "APm", "APl", "AR1", "AR10", "AR100", "ARs", "ARm", "ARl"]
+            metric_with_fields = { 
+                k : v * 100 for k, v in zip( fields, coco_eval_bbox_metric)
+            }
+            wandb.log(
+                metric_with_fields,
+                step=epoch,
+                commit=True,
+                )
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
+    wandb.finish()
 
 
 if __name__ == '__main__':
