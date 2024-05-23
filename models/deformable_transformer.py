@@ -59,8 +59,11 @@ class DeformableTransformer(nn.Module):
 
         self._reset_parameters()
 
-        self.num_detection_stages = len( self.encoder.layers )
-        assert self.num_detection_stages == len( self.decoder.layers )
+        self.encoder_layers = num_encoder_layers
+        self.decoder_layers = num_decoder_layers
+        assert self.encoder_layers == self.decoder_layers - 1
+        self.num_detection_stages = self.decoder_layers
+
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -147,7 +150,7 @@ class DeformableTransformer(nn.Module):
         valid_ratios,
         **kwargs
         ):
-        memory = self.encoder.cascade_stage_forward(stage_idx, enc_src, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
+        memory = self.encoder.cascade_stage_forward(stage_idx - 1, enc_src, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
 
         # decoder
         dec_hs_o2o, dec_hs_o2m, dec_ref, dec_new_ref= \
@@ -193,8 +196,9 @@ class DeformableTransformer(nn.Module):
         enc_padding_mask = mask_flatten
         enc_reference_points = self.encoder.get_reference_points(spatial_shapes, valid_ratios, device=src_flatten.device)
 
-        # >>===================== Start 1st detection stage=====================
-        memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
+        # >>===================== Start 1st detection stage, which don't contain encoder =====================
+        # memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
+
         # prepare input for 1st decoder stage
         bs, _, c = memory.shape
         if self.two_stage:
@@ -239,7 +243,7 @@ class DeformableTransformer(nn.Module):
         inter_references.append(dec_new_ref if self.decoder.look_forward_twice else dec_ref)
         # >>===================== End 1st detection stage=====================
 
-        # >>===================== Start following detection stage=====================
+        # >>===================== Start following detection stage, which contains encoder =====================
         for stage_idx in range(1, self.num_detection_stages):
             memory, dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref = \
                 self.cascade_stage(
