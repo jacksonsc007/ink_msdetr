@@ -2,13 +2,13 @@ set -e
 coco_path=data/coco
 num_gpus=8
 num_enc_layers=6
-num_dec_layers=6
+num_dec_layers=7
 dataset=minicoco
 batch_size=16
 device_code=3060x8_2
 backbone=resnet18
 num_queries=300
-branch_name=asymmetric_enc_dec
+branch_name=asymmetric_enc_dec_v1.1
 
 exp_code=${device_code}_${dataset}-cascade-msdetr_${branch_name}_${backbone}_enc${num_enc_layers}_dec${num_dec_layers}_query${num_queries}-bs${batch_size}
 EXP_DIR=exps/${exp_code}

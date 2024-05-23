@@ -63,7 +63,18 @@ class DeformableTransformer(nn.Module):
         self.decoder_layers = num_decoder_layers
         assert self.encoder_layers == self.decoder_layers - 1
         self.num_detection_stages = self.decoder_layers
-
+        
+        self.stage_align_layers = nn.ModuleList()
+        for i in range( self.num_detection_stages - 1):
+            self.stage_align_layers.append( 
+                nn.Sequential(
+                    nn.Linear( 
+                        d_model * (i + 2), 
+                        d_model 
+                    ),
+                    nn.LayerNorm(d_model) 
+                )
+            )
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -148,16 +159,20 @@ class DeformableTransformer(nn.Module):
         spatial_shapes, 
         level_start_index, 
         valid_ratios,
+        memory_history,
         **kwargs
         ):
         memory = self.encoder.cascade_stage_forward(stage_idx - 1, enc_src, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
 
+        memory_history = torch.cat([memory_history, memory], dim=2)
+        dec_memory = self.stage_align_layers[stage_idx - 1](memory_history)
+
         # decoder
         dec_hs_o2o, dec_hs_o2m, dec_ref, dec_new_ref= \
-            self.decoder.cascade_stage_forward(stage_idx, dec_tgt, dec_reference_points, memory,
+            self.decoder.cascade_stage_forward(stage_idx, dec_tgt, dec_reference_points, dec_memory,
                 spatial_shapes, level_start_index, valid_ratios, dec_query_pos, enc_padding_mask, **kwargs)
         
-        return memory, dec_hs_o2o, dec_hs_o2m, dec_ref, dec_new_ref
+        return memory, dec_hs_o2o, dec_hs_o2m, dec_ref, dec_new_ref, memory_history
 
          
 
@@ -244,8 +259,9 @@ class DeformableTransformer(nn.Module):
         # >>===================== End 1st detection stage=====================
 
         # >>===================== Start following detection stage, which contains encoder =====================
+        memory_history = memory
         for stage_idx in range(1, self.num_detection_stages):
-            memory, dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref = \
+            memory, dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref, memory_history = \
                 self.cascade_stage(
                     stage_idx,
                     # encoder part
@@ -261,6 +277,7 @@ class DeformableTransformer(nn.Module):
                     spatial_shapes=spatial_shapes, 
                     level_start_index=level_start_index, 
                     valid_ratios=valid_ratios,
+                    memory_history=memory_history,
                     **kwargs
                 ) 
 
