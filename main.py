@@ -355,20 +355,12 @@ def main(args):
             metric_with_fields = { 
                 k : v * 100 for k, v in zip( fields, coco_eval_bbox_metric)
             }
-<<<<<<< HEAD
             if args.wandb_enabled:
                 wandb.log(
                     metric_with_fields,
                     step=epoch,
                     commit=True,
                     )
-=======
-            wandb.log(
-                metric_with_fields,
-                step=epoch,
-                commit=True,
-                )
->>>>>>> 655528e (v1.1)
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))

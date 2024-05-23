@@ -5,15 +5,16 @@ num_enc_layers=6
 num_dec_layers=6
 dataset=minicoco
 batch_size=2
-code_version=stage_align_v1.1
-
-EXP_DIR=exps/${dataset}-${code_version}_cascade-msdetr_enc${num_enc_layers}_dec${num_dec_layers}-bs${batch_size}
+code_version=stage_align_v1.2
+exp_code=${dataset}-${code_version}_cascade-msdetr_enc${num_enc_layers}_dec${num_dec_layers}-bs${batch_size}
+EXP_DIR=exps/${exp_code}
 
 mkdir -p $EXP_DIR
 
 GPUS_PER_NODE=$num_gpus ./tools/run_dist_launch.sh $num_gpus python -u main.py \
    --lr 2.5e-5 \
    --lr_backbone 2.5e-6 \
+   --wandb_name $exp_code \
    --batch_size $batch_size \
    --enc_layers $num_enc_layers \
    --dec_layers $num_dec_layers \
