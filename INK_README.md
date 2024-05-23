@@ -10,3 +10,6 @@ Based on v1.0, add layernorm after linear layers.
 
 # v1.2
 limit the number of previous memory to 1.
+
+# v1.3
+Use addition rather than concatenation.

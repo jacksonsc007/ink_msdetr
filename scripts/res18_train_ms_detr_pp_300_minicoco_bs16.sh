@@ -7,7 +7,7 @@ dataset=minicoco
 batch_size=16
 device_code=3060x8_2
 backbone=resnet18
-branch_name=stage_align_v1.1
+branch_name=stage_align_v1.3
 num_queries=100
 
 exp_code=shortersize_480-${device_code}_${dataset}-cascade-msdetr_${branch_name}_${backbone}_enc${num_enc_layers}_dec${num_dec_layers}_query${num_queries}-bs${batch_size}

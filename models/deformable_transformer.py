@@ -62,17 +62,6 @@ class DeformableTransformer(nn.Module):
         self.num_detection_stages = len( self.encoder.layers )
         assert self.num_detection_stages == len( self.decoder.layers )
 
-        self.stage_align_layers = nn.ModuleList()
-        for i in range( self.num_detection_stages ):
-            self.stage_align_layers.append( 
-                nn.Sequential(
-                    nn.Linear( 
-                        d_model * (2), 
-                        d_model 
-                    ),
-                    nn.LayerNorm(d_model) 
-                )
-            )
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -162,7 +151,7 @@ class DeformableTransformer(nn.Module):
         memory = self.encoder.cascade_stage_forward(stage_idx, enc_src, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
 
         # align with previous stage
-        dec_memory = self.stage_align_layers[stage_idx](torch.cat([enc_src, memory], dim=2))
+        dec_memory = enc_src + memory
         # decoder
         dec_hs_o2o, dec_hs_o2m, dec_ref, dec_new_ref= \
             self.decoder.cascade_stage_forward(stage_idx, dec_tgt, dec_reference_points, dec_memory,
@@ -244,7 +233,7 @@ class DeformableTransformer(nn.Module):
         dec_reference_points = reference_points
 
         # align with backbone feature
-        dec_memory = self.stage_align_layers[0](torch.cat([src_flatten, memory], dim=2))
+        dec_memory = memory + src_flatten
 
         # decoder
         dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref= \
