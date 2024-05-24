@@ -9,4 +9,7 @@ Naive design.
 
 
 # v1.1
-Use stage aligner.
+Use stage aligner
+
+# v1.2
+Basd on v1.0, add FPN after the backbone memory.
