@@ -20,6 +20,19 @@ from util.misc import inverse_sigmoid
 from models.ops.modules import MSDeformAttn
 # from config import *
 
+class MLP(nn.Module):
+    """ Very simple multi-layer perceptron (also called FFN)"""
+
+    def __init__(self, input_dim, hidden_dim, output_dim, num_layers):
+        super().__init__()
+        self.num_layers = num_layers
+        h = [hidden_dim] * (num_layers - 1)
+        self.layers = nn.ModuleList(nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim]))
+
+    def forward(self, x):
+        for i, layer in enumerate(self.layers):
+            x = F.relu(layer(x)) if i < self.num_layers - 1 else layer(x)
+        return x
 
 class DeformableTransformer(nn.Module):
     def __init__(self, d_model=256, nhead=8,
@@ -61,6 +74,9 @@ class DeformableTransformer(nn.Module):
 
         self.num_detection_stages = len( self.encoder.layers )
         assert self.num_detection_stages == len( self.decoder.layers )
+
+        self.proj_before_mask = MLP(d_model, d_model, d_model, 3) 
+        self.proj_before_mask = _get_clones(self.proj_before_mask, self.num_detection_stages)
 
 
     def _reset_parameters(self):
@@ -151,7 +167,9 @@ class DeformableTransformer(nn.Module):
         memory = self.encoder.cascade_stage_forward(stage_idx, enc_src, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
 
         # align with previous stage
-        dec_memory = enc_src + memory
+        soft_mask = self.proj_before_mask[stage_idx](memory).sigmoid()
+        masked_src = enc_src * soft_mask
+        dec_memory = masked_src + memory
         # decoder
         dec_hs_o2o, dec_hs_o2m, dec_ref, dec_new_ref= \
             self.decoder.cascade_stage_forward(stage_idx, dec_tgt, dec_reference_points, dec_memory,
@@ -233,7 +251,9 @@ class DeformableTransformer(nn.Module):
         dec_reference_points = reference_points
 
         # align with backbone feature
-        dec_memory = memory + src_flatten
+        soft_mask = self.proj_before_mask[0](memory).sigmoid()
+        masked_src = soft_mask * src_flatten
+        dec_memory = memory + masked_src
 
         # decoder
         dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref= \

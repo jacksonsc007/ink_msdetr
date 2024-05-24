@@ -5,7 +5,7 @@ num_enc_layers=6
 num_dec_layers=6
 dataset=minicoco
 batch_size=2
-code_version=stage_align_v1.3
+code_version=stage_align_v1.4
 exp_code=${dataset}-${code_version}_cascade-msdetr_enc${num_enc_layers}_dec${num_dec_layers}-bs${batch_size}
 EXP_DIR=exps/${exp_code}
 

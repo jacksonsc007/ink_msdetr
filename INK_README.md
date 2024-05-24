@@ -13,3 +13,6 @@ limit the number of previous memory to 1.
 
 # v1.3
 Use addition rather than concatenation.
+
+# v1.4
+Based on v1.3, add soft mask.
