@@ -7,8 +7,8 @@ dataset=minicoco
 batch_size=16
 device_code=3060x8_2
 backbone=resnet18
-num_queries=300
-branch_name=asymmetric_enc_dec_v1.1
+num_queries=100
+branch_name=asymmetric_enc_dec_v1.3
 
 exp_code=${device_code}_${dataset}-cascade-msdetr_${branch_name}_${backbone}_enc${num_enc_layers}_dec${num_dec_layers}_query${num_queries}-bs${batch_size}
 EXP_DIR=exps/${exp_code}
@@ -28,7 +28,7 @@ GPUS_PER_NODE=$num_gpus ./tools/run_dist_launch.sh $num_gpus python -u main.py \
    --epochs 12 \
    --lr_drop 11 \
    --coco_path=$coco_path \
-   --num_queries 300 \
+   --num_queries ${num_queries} \
    --dropout 0.0 \
    --mixed_selection \
    --look_forward_twice \
