@@ -14,5 +14,8 @@ Use stage aligner
 # v1.2
 Basd on v1.0, add FPN after the backbone memory.
 
+## v1.2.1
+Based on v1.2, Feed positional emebedding before FFN.
+
 # v1.3
 Based on v1.0, add multi_scale_alinger of version 1.7.3.2

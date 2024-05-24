@@ -19,7 +19,6 @@ from torch.nn.init import xavier_uniform_, constant_, uniform_, normal_
 from util.misc import inverse_sigmoid
 from models.ops.modules import MSDeformAttn
 # from config import *
-from .aligner import MultiScaleAligner_v1734 as MultiScaleAligner
 
 
 class DeformableTransformer(nn.Module):
@@ -64,13 +63,20 @@ class DeformableTransformer(nn.Module):
         self.decoder_layers = num_decoder_layers
         assert self.encoder_layers == self.decoder_layers - 1
         self.num_detection_stages = self.decoder_layers
-        self.MultiScaleAligner = MultiScaleAligner(
-            num_levels=num_feature_levels,
-            norm_type="GN",
-            in_channels=self.d_model,
-            out_channels=self.d_model
-        )
 
+        # ffn
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.activation = _get_activation_fn(activation)
+        self.dropout2 = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+        self.dropout3 = nn.Dropout(dropout)
+        self.norm2 = nn.LayerNorm(d_model)
+
+    def forward_ffn(self, src):
+        src2 = self.linear2(self.dropout2(self.activation(self.linear1(src))))
+        src = src + self.dropout3(src2)
+        src = self.norm2(src)
+        return src
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -206,19 +212,8 @@ class DeformableTransformer(nn.Module):
         # >>===================== Start 1st detection stage, which don't contain encoder =====================
         # memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
 
-        # align multi level features
-        bs, _, c_dim = memory.shape
-        multi_lvl_memory_list = memory.split(spatial_shapes.prod(-1).tolist(), dim=1)
-        multi_lvl_memory_list = [
-            x.permute(0, 2, 1).reshape(bs, c_dim, h, w)
-            for x, (h, w) in zip(multi_lvl_memory_list, spatial_shapes.tolist())
-        ]
-        multi_lvl_memory_list = self.MultiScaleAligner(multi_lvl_memory_list)
-        multi_lvl_memory_list = [
-            x.permute(0, 2, 3, 1).reshape(bs, h * w, c_dim)
-            for x, (h, w) in zip(multi_lvl_memory_list, spatial_shapes.tolist())
-        ]
-        memory = torch.cat(multi_lvl_memory_list, dim=1)
+        # only keep ffn
+        memory = self.forward_ffn(memory + enc_pos)
 
         # prepare input for 1st decoder stage
         bs, _, c = memory.shape
