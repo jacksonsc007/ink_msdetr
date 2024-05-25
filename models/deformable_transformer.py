@@ -17,7 +17,7 @@ from torch import nn, Tensor
 from torch.nn.init import xavier_uniform_, constant_, uniform_, normal_
 
 from util.misc import inverse_sigmoid
-from models.ops.modules import MSDeformAttn
+from models.ops.modules import MSDeformAttn, MultiScaleSampler
 # from config import *
 
 
@@ -64,6 +64,12 @@ class DeformableTransformer(nn.Module):
         assert self.encoder_layers == self.decoder_layers - 1
         self.num_detection_stages = self.decoder_layers
 
+
+        # multiscale sampler
+        self.multi_scale_sampler = MultiScaleSampler(d_model, num_feature_levels, nhead, 1)
+        self.dropout1 = nn.Dropout(dropout)
+        self.norm1 = nn.LayerNorm(d_model)
+
         # ffn
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.activation = _get_activation_fn(activation)
@@ -71,6 +77,7 @@ class DeformableTransformer(nn.Module):
         self.linear2 = nn.Linear(dim_feedforward, d_model)
         self.dropout3 = nn.Dropout(dropout)
         self.norm2 = nn.LayerNorm(d_model)
+
 
     def forward_ffn(self, src):
         src2 = self.linear2(self.dropout2(self.activation(self.linear1(src))))
@@ -182,16 +189,16 @@ class DeformableTransformer(nn.Module):
         mask_flatten = []
         lvl_pos_embed_flatten = []
         spatial_shapes = []
-        for lvl, (src, mask, pos_embed) in enumerate(zip(srcs, masks, pos_embeds)):
-            bs, c, h, w = src.shape
+        for lvl, (memory, mask, pos_embed) in enumerate(zip(srcs, masks, pos_embeds)):
+            bs, c, h, w = memory.shape
             spatial_shape = (h, w)
             spatial_shapes.append(spatial_shape)
-            src = src.flatten(2).transpose(1, 2)
+            memory = memory.flatten(2).transpose(1, 2)
             mask = mask.flatten(1)
             pos_embed = pos_embed.flatten(2).transpose(1, 2)
             lvl_pos_embed = pos_embed + self.level_embed[lvl].view(1, 1, -1)
             lvl_pos_embed_flatten.append(lvl_pos_embed)
-            src_flatten.append(src)
+            src_flatten.append(memory)
             mask_flatten.append(mask)
         src_flatten = torch.cat(src_flatten, 1)
         mask_flatten = torch.cat(mask_flatten, 1)
@@ -212,8 +219,11 @@ class DeformableTransformer(nn.Module):
         # >>===================== Start 1st detection stage, which don't contain encoder =====================
         # memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
 
-        # only keep ffn
-        memory = self.forward_ffn(memory + enc_pos)
+        # use multi-scale sampler
+        sampled_feat = self.multi_scale_sampler(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
+        memory = memory + self.dropout1(sampled_feat)
+        memory = self.norm1(memory)
+        memory = self.forward_ffn(memory)
 
         # prepare input for 1st decoder stage
         bs, _, c = memory.shape
