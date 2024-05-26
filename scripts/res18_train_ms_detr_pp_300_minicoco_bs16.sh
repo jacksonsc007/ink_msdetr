@@ -5,10 +5,10 @@ num_enc_layers=6
 num_dec_layers=7
 dataset=minicoco
 batch_size=16
-device_code=3060x8_2
+device_code=3060x8_1
 backbone=resnet18
 num_queries=100
-branch_name=asymmetric_enc_dec_v1.4
+branch_name=asymmetric_enc_dec_v1.4.1
 
 exp_code=shortersize_480-${device_code}_${dataset}-cascade-msdetr_${branch_name}_${backbone}_enc${num_enc_layers}_dec${num_dec_layers}_query${num_queries}-bs${batch_size}
 EXP_DIR=exps/${exp_code}

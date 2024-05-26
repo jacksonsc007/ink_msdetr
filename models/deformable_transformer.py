@@ -66,7 +66,7 @@ class DeformableTransformer(nn.Module):
 
 
         # multiscale sampler
-        self.multi_scale_sampler = MultiScaleSampler(d_model, num_feature_levels, nhead, 1)
+        self.multi_scale_sampler = MultiScaleSampler(d_model, num_feature_levels, nhead, 4)
         self.dropout1 = nn.Dropout(dropout)
         self.norm1 = nn.LayerNorm(d_model)
 
