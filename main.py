@@ -143,6 +143,7 @@ def get_args_parser():
     parser.add_argument('--topk_eval', default=100, type=int)
     parser.add_argument('--nms_iou_threshold', default=None, type=float)
     parser.add_argument('--wandb_name', default="msdetr_exp", type=str)
+    parser.add_argument('--wandb_enabled', default=False, action='store_true')
     
     return parser
 
@@ -288,7 +289,7 @@ def main(args):
             utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
         return
 
-    if utils.is_main_process():
+    if args.wandb_enabled and utils.is_main_process():
         # wandb logger
         wandb.init(
             # set the wandb project where this run will be logged
@@ -354,16 +355,18 @@ def main(args):
             metric_with_fields = { 
                 k : v * 100 for k, v in zip( fields, coco_eval_bbox_metric)
             }
-            wandb.log(
-                metric_with_fields,
-                step=epoch,
-                commit=True,
-                )
+            if args.wandb_enabled:
+                wandb.log(
+                    metric_with_fields,
+                    step=epoch,
+                    commit=True,
+                    )
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
-    wandb.finish()
+    if args.wandb_enabled:
+        wandb.finish()
 
 
 if __name__ == '__main__':
