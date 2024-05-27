@@ -5,7 +5,12 @@ num_enc_layers=6
 num_dec_layers=6
 dataset=minicoco
 batch_size=2
-exp_code=4090_${dataset}-msdetr_improve_v1.0_enc${num_enc_layers}_dec${num_dec_layers}-bs${batch_size}
+device_code=4090
+branch=msdetr_improve_v1.1
+backbone=resnet18
+num_queries=100
+
+exp_code=shortersize_480_${device_code}_${dataset}-${branch}-${backbone}_enc${num_enc_layers}_dec${num_dec_layers}_query${num_queries}-bs${batch_size}
 EXP_DIR=exps/${exp_code}
 
 mkdir -p $EXP_DIR
@@ -13,6 +18,7 @@ mkdir -p $EXP_DIR
 GPUS_PER_NODE=$num_gpus ./tools/run_dist_launch.sh $num_gpus python -u main.py \
    --lr 2.5e-5 \
    --lr_backbone 2.5e-6 \
+   --backbone $backbone \
    --wandb_enabled \
    --wandb_name ${exp_code} \
    --batch_size $batch_size \
@@ -25,7 +31,7 @@ GPUS_PER_NODE=$num_gpus ./tools/run_dist_launch.sh $num_gpus python -u main.py \
    --epochs 12 \
    --lr_drop 11 \
    --coco_path=$coco_path \
-   --num_queries 300 \
+   --num_queries $num_queries \
    --dropout 0.0 \
    --mixed_selection \
    --look_forward_twice \

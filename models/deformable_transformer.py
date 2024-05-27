@@ -17,7 +17,7 @@ from torch import nn, Tensor
 from torch.nn.init import xavier_uniform_, constant_, uniform_, normal_
 
 from util.misc import inverse_sigmoid
-from models.ops.modules import MSDeformAttn
+from models.ops.modules import MSDeformAttn, MultiScaleSampler
 # from config import *
 
 
@@ -58,6 +58,25 @@ class DeformableTransformer(nn.Module):
             self.reference_points = nn.Linear(d_model, 2)
 
         self._reset_parameters()
+
+        # multiscale sampler
+        self.multi_scale_sampler = MultiScaleSampler(d_model, num_feature_levels, nhead, 1)
+        self.dropout1 = nn.Dropout(dropout)
+        self.norm1 = nn.LayerNorm(d_model)
+
+        # ffn
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.activation = _get_activation_fn(activation)
+        self.dropout2 = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+        self.dropout3 = nn.Dropout(dropout)
+        self.norm2 = nn.LayerNorm(d_model)
+
+    def forward_ffn(self, src):
+        src2 = self.linear2(self.dropout2(self.activation(self.linear1(src))))
+        src = src + self.dropout3(src2)
+        src = self.norm2(src)
+        return src
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -152,6 +171,13 @@ class DeformableTransformer(nn.Module):
         spatial_shapes = torch.as_tensor(spatial_shapes, dtype=torch.long, device=src_flatten.device)
         level_start_index = torch.cat((spatial_shapes.new_zeros((1, )), spatial_shapes.prod(1).cumsum(0)[:-1]))
         valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks], 1)
+
+        # use multi-scale sampler
+        enc_reference_points = self.encoder.get_reference_points(spatial_shapes, valid_ratios, device=src_flatten.device)
+        sampled_feat = self.multi_scale_sampler(src_flatten, enc_reference_points, spatial_shapes, level_start_index, mask_flatten)
+        src_flatten = src_flatten + self.dropout1(sampled_feat)
+        src_flatten = self.norm1(src_flatten)
+        src_flatten = self.forward_ffn(src_flatten)
 
         # encoder
         memory = self.encoder(src_flatten, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
