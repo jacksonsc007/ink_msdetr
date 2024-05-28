@@ -6,10 +6,11 @@ num_dec_layers=6
 dataset=minicoco
 batch_size=2
 device_code=4090
+branch=hybrid_cascade_msdetr_v1.0
 backbone=resnet18
 num_queries=100
 
-exp_code=shortersize_480-${device_code}_${dataset}-cascade-msdetr_baseline_${backbone}_enc${num_enc_layers}_dec${num_dec_layers}_query${num_queries}-bs${batch_size}
+exp_code=shortersize480-${device_code}_${dataset}-${branch}_${backbone}_enc${num_enc_layers}_dec${num_dec_layers}_query${num_queries}-bs${batch_size}
 EXP_DIR=exps/${exp_code}
 
 mkdir -p $EXP_DIR
