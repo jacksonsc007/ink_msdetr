@@ -6,7 +6,7 @@ num_dec_layers=6
 dataset=minicoco
 batch_size=2
 device_code=4090
-branch=msdetr_improve_v1.1
+branch=msdetr_improve_v1.1.1
 backbone=resnet18
 num_queries=100
 
