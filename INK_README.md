@@ -8,5 +8,9 @@ Some changes from the original work:
 
 # v1
 ## v1.0
-Use multi_scale_sampler proposed in branch asymmetric_enc_dec
+Use multi_scale_sampler (v1.4.1 in branch asymmetric_enc_dec )proposed in branch asymmetric_enc_dec
 
+## v1.1
+Use multi_scale_sampler (v1.4 in branch asymmetric_enc_dec )proposed in branch asymmetric_enc_dec
+
+only use 1 head

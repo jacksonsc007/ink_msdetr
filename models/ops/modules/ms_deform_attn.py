@@ -26,8 +26,9 @@ def _is_power_of_2(n):
         raise ValueError("invalid input for _is_power_of_2: {} (type: {})".format(n, type(n)))
     return (n & (n-1) == 0) and n != 0
 
+
 class MultiScaleSampler(nn.Module):
-    def __init__(self, d_model=256, n_levels=4, n_heads=8, n_points=4):
+    def __init__(self, d_model=256, n_levels=4, n_heads=8, n_points=1):
         """
         Multi-Scale Deformable Attention Module
         :param d_model      hidden dimension
@@ -55,7 +56,6 @@ class MultiScaleSampler(nn.Module):
         self.output_proj = nn.Linear(d_model, d_model)
 
         self._reset_parameters()
-
 
     def _reset_parameters(self):
         xavier_uniform_(self.value_proj.weight.data)
@@ -86,23 +86,12 @@ class MultiScaleSampler(nn.Module):
         attention_weights = F.softmax(attention_weights, -1).view(N, Len_in, self.n_heads, self.n_levels, self.n_points)
         # N, Len_q, n_heads, n_levels, n_points, 2
         assert reference_points.shape[-1] == 2
-        # sampling_locations = reference_points[:, :, None, :, None, :].repeat(1, 1, self.n_heads, 1, self.n_points, 1)
-
-        # generate fixed sampling points
-        thetas = torch.arange(self.n_heads, dtype=torch.float32, device=value.device) * (2.0 * math.pi / self.n_heads)
-        sampling_offsets = torch.stack([thetas.cos(), thetas.sin()], -1)
-        sampling_offsets = (sampling_offsets / sampling_offsets.abs().max(-1, keepdim=True)[0]).view(self.n_heads, 1, 1, 2).repeat(1, self.n_levels, self.n_points, 1)
-        for i in range(self.n_points):
-            sampling_offsets[:, :, i, :] *= i + 1
-
-        offset_normalizer = torch.stack([input_spatial_shapes[..., 1], input_spatial_shapes[..., 0]], -1)
-        sampling_locations = reference_points[:, :, None, :, None, :] \
-                                + sampling_offsets / offset_normalizer[None, None, None, :, None, :]
-
+        sampling_locations = reference_points[:, :, None, :, None, :].repeat(1, 1, self.n_heads, 1, self.n_points, 1)
         output = MSDeformAttnFunction.apply(
             value, input_spatial_shapes, input_level_start_index, sampling_locations, attention_weights, self.im2col_step)
         output = self.output_proj(output)
         return output
+
 
 
 class MSDeformAttn(nn.Module):
