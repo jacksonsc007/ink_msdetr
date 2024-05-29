@@ -17,6 +17,7 @@ mkdir -p $EXP_DIR
 GPUS_PER_NODE=$num_gpus ./tools/run_dist_launch.sh $num_gpus python -u main.py \
    --lr 2.5e-5 \
    --lr_backbone 2.5e-6 \
+   --backbone $backbone \
    --wandb_enabled \
    --wandb_name $exp_code \
    --batch_size $batch_size \
