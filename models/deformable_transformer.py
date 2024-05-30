@@ -294,10 +294,9 @@ class DeformableTransformerEncoderLayer(nn.Module):
         self.linear2 = nn.Linear(d_ffn, d_model)
         self.dropout3 = nn.Dropout(dropout)
         self.norm2 = nn.LayerNorm(d_model)
-        # fusion for attention
-        self.fusion_proj1 = nn.Linear(2 * d_model, d_model)
-        xavier_uniform_(self.fusion_proj1.weight.data)
-        constant_(self.fusion_proj1.bias.data, 0.0)
+
+        self.align_proj = nn.Linear(2 * d_model, d_model)
+        self.norm3 = nn.LayerNorm(d_model)
 
     @staticmethod
     def with_pos_embed(tensor, pos):
@@ -312,15 +311,16 @@ class DeformableTransformerEncoderLayer(nn.Module):
     def forward(self, src, pos, reference_points, spatial_shapes, level_start_index, padding_mask=None):
         # self attention
         src2 = self.self_attn(self.with_pos_embed(src, pos), reference_points, src, spatial_shapes, level_start_index, padding_mask)
-        # src = src + self.dropout1(src2)
-        src2 = self.dropout1(src2)
-        src = self.fusion_proj1( torch.cat([src, src2], dim=2))
-        src = self.norm1(src)
+        output = src + self.dropout1(src2)
+        output = self.norm1(output)
 
         # ffn
-        src = self.forward_ffn(src)
+        output = self.forward_ffn(output)
+        output = torch.cat([src, output], dim=2)
+        output = self.align_proj(output)
+        output = self.norm3(output)
 
-        return src
+        return output
 
 
 class DeformableTransformerEncoder(nn.Module):
@@ -392,12 +392,6 @@ class DeformableTransformerDecoderLayer(nn.Module):
             self.linear4 = nn.Linear(d_ffn, d_model)
             self.dropout6 = nn.Dropout(dropout)
             self.norm4 = nn.LayerNorm(d_model)
-        # self.self_fusion_proj = nn.Linear(2 * d_model, d_model)
-        # xavier_uniform_(self.self_fusion_proj.weight.data)
-        # constant_(self.self_fusion_proj.bias.data, 0.0)
-        self.cross_fusion_proj = nn.Linear(2 * d_model, d_model) 
-        xavier_uniform_(self.cross_fusion_proj.weight.data)
-        constant_(self.cross_fusion_proj.bias.data, 0.0)
 
     @staticmethod
     def with_pos_embed(tensor, pos):
@@ -416,16 +410,11 @@ class DeformableTransformerDecoderLayer(nn.Module):
         return tgt
 
     def forward(self, tgt, query_pos, reference_points, src, src_spatial_shapes, level_start_index, src_padding_mask=None):
-        assert self.use_ms_detr
         if self.use_ms_detr:
             # cross attention
             tgt2 = self.cross_attn(self.with_pos_embed(tgt, query_pos),
                                    reference_points, src, src_spatial_shapes, level_start_index, src_padding_mask)
-            # tgt = tgt + self.dropout1(tgt2)
-            tgt2 = self.dropout1(tgt2)
-            tgt = self.cross_fusion_proj(
-                torch.cat([tgt2, tgt], dim=2)
-            )
+            tgt = tgt + self.dropout1(tgt2)
             tgt = self.norm1(tgt)
 
             if self.use_aux_ffn:
@@ -438,10 +427,6 @@ class DeformableTransformerDecoderLayer(nn.Module):
             q = k = self.with_pos_embed(tgt, query_pos)
             tgt2 = self.self_attn(q.transpose(0, 1), k.transpose(0, 1), tgt.transpose(0, 1))[0].transpose(0, 1)
             tgt = tgt + self.dropout2(tgt2)
-            # tgt2 = self.dropout2(tgt2)
-            # tgt = self.self_fusion_proj(
-            #     torch.cat([tgt, tgt2], dim=2)
-            # )
             tgt = self.norm2(tgt)
 
             # ffn

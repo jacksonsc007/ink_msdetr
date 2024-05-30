@@ -13,3 +13,9 @@ Only use cat to fuse feature on attention and FFN of encoder.
 
 ## v1.0.1
 Use cat on deformable attention of both encoder (selfattention) and decoder (cross-attention).
+
+
+# v2
+The residual add structure for deformable attention and FFN is kept. Besides, we add another concat operation on top of them.
+
+# v2.1
