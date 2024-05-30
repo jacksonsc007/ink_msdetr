@@ -134,9 +134,12 @@ class DeformableTransformer(nn.Module):
         stage_idx,
         # encoder part
         enc_src, 
+        enc_query,
         enc_reference_points, 
         enc_pos, 
         enc_padding_mask,
+        topk_enc_token_indice,
+        valid_enc_token_num,
         # decoder part
         dec_tgt, 
         dec_reference_points, 
@@ -147,14 +150,14 @@ class DeformableTransformer(nn.Module):
         valid_ratios,
         **kwargs
         ):
-        memory = self.encoder.cascade_stage_forward(stage_idx, enc_src, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
+        memory = self.encoder.cascade_stage_forward(stage_idx, enc_src, enc_query, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask, topk_enc_token_indice, valid_enc_token_num)
 
         # decoder
-        dec_hs_o2o, dec_hs_o2m, dec_ref, dec_new_ref= \
+        dec_hs_o2o, dec_hs_o2m, dec_ref, dec_new_ref, dec_sampling_locations, dec_attention_weights= \
             self.decoder.cascade_stage_forward(stage_idx, dec_tgt, dec_reference_points, memory,
                 spatial_shapes, level_start_index, valid_ratios, dec_query_pos, enc_padding_mask, **kwargs)
         
-        return memory, dec_hs_o2o, dec_hs_o2m, dec_ref, dec_new_ref
+        return memory, dec_hs_o2o, dec_hs_o2m, dec_ref, dec_new_ref, dec_sampling_locations, dec_attention_weights
 
          
 
@@ -194,7 +197,7 @@ class DeformableTransformer(nn.Module):
         enc_reference_points = self.encoder.get_reference_points(spatial_shapes, valid_ratios, device=src_flatten.device)
 
         # >>===================== Start 1st detection stage=====================
-        memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
+        memory = self.encoder.cascade_stage_forward(0, memory, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
         # prepare input for 1st decoder stage
         bs, _, c = memory.shape
         if self.two_stage:
@@ -230,7 +233,7 @@ class DeformableTransformer(nn.Module):
         dec_query_pos = query_embed
         dec_reference_points = reference_points
         # decoder
-        dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref= \
+        dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref, dec_sampling_locations, dec_attention_weights= \
             self.decoder.cascade_stage_forward(0, dec_tgt, dec_reference_points, memory,
                 spatial_shapes, level_start_index, valid_ratios, dec_query_pos, enc_padding_mask, **kwargs)
 
@@ -240,14 +243,34 @@ class DeformableTransformer(nn.Module):
         # >>===================== End 1st detection stage=====================
 
         # >>===================== Start following detection stage=====================
+        valid_tokens_nums_all_imgs = (~mask_flatten).int().sum(dim=1)
         for stage_idx in range(1, self.num_detection_stages):
-            memory, dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref = \
+
+            dec_sampling_locations = dec_sampling_locations[:, None]
+            dec_attention_weights = dec_attention_weights[:, None]
+                
+            # (bs, 1, num_head, num_all_lvl_tokens) -> (bs, num_all_lvl_tokens)
+            cross_attn_map = attn_map_to_flat_grid(spatial_shapes, level_start_index, dec_sampling_locations, dec_attention_weights).sum(dim=(1,2))
+            assert cross_attn_map.size() == mask_flatten.size()
+            cross_attn_map = cross_attn_map.masked_fill(mask_flatten, cross_attn_map.min()-1)
+
+            valid_enc_token_num =  (valid_tokens_nums_all_imgs * 0.1 ).int() + 1
+            batch_token_num = max(valid_enc_token_num)
+            topk_enc_token_indice = cross_attn_map.topk(batch_token_num, dim=1)[1] # (bs, batch_token_num)
+            sparse_enc_query = memory.gather(dim=1, index=topk_enc_token_indice.unsqueeze(dim=2).repeat(1, 1, self.d_model))
+            sparse_enc_query_pos = lvl_pos_embed_flatten.gather(dim=1, index=topk_enc_token_indice.unsqueeze(dim=2).repeat(1, 1, self.d_model))
+            num_lvl = enc_reference_points.size(2)
+            sparse_enc_ref = enc_reference_points.gather(dim=1, index=topk_enc_token_indice.unsqueeze(dim=2).unsqueeze(dim=3).repeat(1, 1, num_lvl, 2)) # (x, y) for ref points
+
+
+            memory, dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref, dec_sampling_locations, dec_attention_weights = \
                 self.cascade_stage(
                     stage_idx,
                     # encoder part
                     enc_src=memory, 
-                    enc_reference_points=enc_reference_points, 
-                    enc_pos=enc_pos, 
+                    enc_query=sparse_enc_query,
+                    enc_reference_points=sparse_enc_ref, 
+                    enc_pos=sparse_enc_query_pos, 
                     enc_padding_mask=enc_padding_mask,
                     # decoder part
                     dec_tgt=dec_query_o2o, 
@@ -257,6 +280,8 @@ class DeformableTransformer(nn.Module):
                     spatial_shapes=spatial_shapes, 
                     level_start_index=level_start_index, 
                     valid_ratios=valid_ratios,
+                    topk_enc_token_indice=topk_enc_token_indice,
+                    valid_enc_token_num=valid_enc_token_num,
                     **kwargs
                 ) 
 
@@ -305,9 +330,21 @@ class DeformableTransformerEncoderLayer(nn.Module):
         src = self.norm2(src)
         return src
 
-    def forward(self, src, pos, reference_points, spatial_shapes, level_start_index, padding_mask=None):
+    def forward(self, src, query, pos, reference_points, spatial_shapes, level_start_index, padding_mask=None, topk_enc_token_indice=None, valid_enc_token_num=None):
         # self attention
-        src2 = self.self_attn(self.with_pos_embed(src, pos), reference_points, src, spatial_shapes, level_start_index, padding_mask)
+        src2, _, _ = self.self_attn(self.with_pos_embed(query, pos), reference_points, src, spatial_shapes, level_start_index, padding_mask)
+        if topk_enc_token_indice is not None:
+            assert valid_enc_token_num is not None
+            bs = topk_enc_token_indice.size(0) 
+            outputs=[]
+            for img_id, (num, idx) in enumerate(zip(valid_enc_token_num, topk_enc_token_indice)):
+                valid_idx = idx[:num]
+                # src[0]: (ori_num_token, 256)
+                # idx: (valid_num,) -> (valid_num, 256)
+                # sparse_memory[0]: (max_token_num, 256)
+                # src[0][index[i,j], j] = sparse_memory[0][i,j]
+                outputs.append(src[img_id].scatter(dim=0, index=valid_idx.unsqueeze(1).repeat(1, src.size(-1)), src=src2[img_id][:num]))
+            src2 = torch.stack(outputs)
         src = src + self.dropout1(src2)
         src = self.norm1(src)
 
@@ -345,9 +382,11 @@ class DeformableTransformerEncoder(nn.Module):
             output = layer(output, pos, reference_points, spatial_shapes, level_start_index, padding_mask)
 
         return output
-    def cascade_stage_forward(self, stage_idx, src, spatial_shapes, level_start_index, reference_points, pos, padding_mask):
+    def cascade_stage_forward(self, stage_idx, src, query, spatial_shapes, level_start_index, reference_points, pos, padding_mask, topk_enc_token_indice=None, valid_enc_token_num=None):
+        # when use sparse tokens, src is not equivalent to query
         layer = self.layers[stage_idx]
-        output = layer(src, pos, reference_points, spatial_shapes, level_start_index, padding_mask)
+        output = layer(src, query, pos, reference_points, spatial_shapes, level_start_index, padding_mask, topk_enc_token_indice, valid_enc_token_num)
+
         return output
 
 
@@ -404,9 +443,10 @@ class DeformableTransformerDecoderLayer(nn.Module):
         return tgt
 
     def forward(self, tgt, query_pos, reference_points, src, src_spatial_shapes, level_start_index, src_padding_mask=None):
+        assert self.use_ms_detr
         if self.use_ms_detr:
             # cross attention
-            tgt2 = self.cross_attn(self.with_pos_embed(tgt, query_pos),
+            tgt2, dec_sampling_locations, dec_attention_weights = self.cross_attn(self.with_pos_embed(tgt, query_pos),
                                    reference_points, src, src_spatial_shapes, level_start_index, src_padding_mask)
             tgt = tgt + self.dropout1(tgt2)
             tgt = self.norm1(tgt)
@@ -442,7 +482,7 @@ class DeformableTransformerDecoderLayer(nn.Module):
             # ffn
             tgt_o2o = tgt_o2m = self.forward_ffn(tgt)
         
-        return tgt_o2o, tgt_o2m
+        return tgt_o2o, tgt_o2m, dec_sampling_locations, dec_attention_weights
 
 
 class DeformableTransformerDecoder(nn.Module):
@@ -510,7 +550,7 @@ class DeformableTransformerDecoder(nn.Module):
         else:
             assert reference_points.shape[-1] == 2
             reference_points_input = reference_points[:, :, None] * src_valid_ratios[:, None]
-        output, output_o2m = layer(tgt, query_pos, reference_points_input, src, src_spatial_shapes, src_level_start_index, src_padding_mask, **kwargs)
+        output, output_o2m, dec_sampling_locations, dec_attention_weights = layer(tgt, query_pos, reference_points_input, src, src_spatial_shapes, src_level_start_index, src_padding_mask, **kwargs)
 
         # hack implementation for iterative bounding box refinement
         if self.bbox_embed is not None:
@@ -527,7 +567,7 @@ class DeformableTransformerDecoder(nn.Module):
 
         assert self.return_intermediate, "cascade detection requires return_intermediate."
         if self.look_forward_twice:
-            return output, output_o2m, reference_points, new_reference_points
+            return output, output_o2m, reference_points, new_reference_points, dec_sampling_locations, dec_attention_weights
         else:
             return output, output_o2m, reference_points, None
 
@@ -567,3 +607,43 @@ def build_deforamble_transformer(args):
         use_ms_detr=args.use_ms_detr,
         use_aux_ffn=args.use_aux_ffn,
     )
+
+def attn_map_to_flat_grid(spatial_shapes, level_start_index, sampling_locations, attention_weights):
+    # sampling_locations: [N, n_layers, Len_q, n_heads, n_levels, n_points, 2]
+    # attention_weights: [N, n_layers, Len_q, n_heads, n_levels, n_points]
+    N, n_layers, _, n_heads, *_ = sampling_locations.shape
+    sampling_locations = sampling_locations.permute(0, 1, 3, 2, 5, 4, 6).flatten(0, 2).flatten(1, 2)
+    # [N * n_layers * n_heads, Len_q * n_points, n_levels, 2]
+    attention_weights = attention_weights.permute(0, 1, 3, 2, 5, 4).flatten(0, 2).flatten(1, 2)
+    # [N * n_layers * n_heads, Len_q * n_points, n_levels]
+
+    rev_spatial_shapes = torch.stack([spatial_shapes[..., 1], spatial_shapes[..., 0]], dim=-1) # hw -> wh (xy)
+    col_row_float = sampling_locations * rev_spatial_shapes
+    # get 4 corner integeral positions around the floating-type sampling locations. 
+    col_row_ll = col_row_float.floor().to(torch.int64)
+    zero = torch.zeros(*col_row_ll.shape[:-1], dtype=torch.int64, device=col_row_ll.device)
+    one = torch.ones(*col_row_ll.shape[:-1], dtype=torch.int64, device=col_row_ll.device)
+    col_row_lh = col_row_ll + torch.stack([zero, one], dim=-1)
+    col_row_hl = col_row_ll + torch.stack([one, zero], dim=-1)
+    col_row_hh = col_row_ll + 1
+    # compute magin for bilinear interpolation
+    margin_ll = (col_row_float - col_row_ll).prod(dim=-1)
+    margin_lh = -(col_row_float - col_row_lh).prod(dim=-1)
+    margin_hl = -(col_row_float - col_row_hl).prod(dim=-1)
+    margin_hh = (col_row_float - col_row_hh).prod(dim=-1)
+
+    flat_grid_shape = (attention_weights.shape[0], int(torch.sum(spatial_shapes[..., 0] * spatial_shapes[..., 1])))
+    flat_grid = torch.zeros(flat_grid_shape, dtype=torch.float32, device=attention_weights.device)
+
+    zipped = [(col_row_ll, margin_hh), (col_row_lh, margin_hl), (col_row_hl, margin_lh), (col_row_hh, margin_ll)]
+    for col_row, margin in zipped:
+        valid_mask = torch.logical_and(
+            torch.logical_and(col_row[..., 0] >= 0, col_row[..., 0] < rev_spatial_shapes[..., 0]),
+            torch.logical_and(col_row[..., 1] >= 0, col_row[..., 1] < rev_spatial_shapes[..., 1]),
+        )
+        idx = col_row[..., 1] * spatial_shapes[..., 1] + col_row[..., 0] + level_start_index
+        idx = (idx * valid_mask).flatten(1, 2)
+        weights = (attention_weights * valid_mask * margin).flatten(1)
+        flat_grid.scatter_add_(1, idx, weights)
+
+    return flat_grid.reshape(N, n_layers, n_heads, -1)
