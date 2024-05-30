@@ -9,3 +9,7 @@ Refer to msdetr.drawio for details.
 
 ## v1.1.2
 Only use cat to fuse feature on attention and FFN of encoder.
+
+
+## v1.0.1
+Use cat on deformable attention of both encoder (selfattention) and decoder (cross-attention).

@@ -298,10 +298,6 @@ class DeformableTransformerEncoderLayer(nn.Module):
         self.fusion_proj1 = nn.Linear(2 * d_model, d_model)
         xavier_uniform_(self.fusion_proj1.weight.data)
         constant_(self.fusion_proj1.bias.data, 0.0)
-        # fusion for FFN
-        self.fusion_proj2 = nn.Linear(2 * d_model, d_model)
-        xavier_uniform_(self.fusion_proj2.weight.data)
-        constant_(self.fusion_proj2.bias.data, 0.0)
 
     @staticmethod
     def with_pos_embed(tensor, pos):
@@ -309,9 +305,7 @@ class DeformableTransformerEncoderLayer(nn.Module):
 
     def forward_ffn(self, src):
         src2 = self.linear2(self.dropout2(self.activation(self.linear1(src))))
-        # src = src + self.dropout3(src2)
-        src2 = self.dropout3(src2)
-        src = self.fusion_proj2( torch.cat([src, src2], dim=2))
+        src = src + self.dropout3(src2)
         src = self.norm2(src)
         return src
 
@@ -401,9 +395,9 @@ class DeformableTransformerDecoderLayer(nn.Module):
         # self.self_fusion_proj = nn.Linear(2 * d_model, d_model)
         # xavier_uniform_(self.self_fusion_proj.weight.data)
         # constant_(self.self_fusion_proj.bias.data, 0.0)
-        # self.cross_fusion_proj = nn.Linear(2 * d_model, d_model)
-        # xavier_uniform_(self.cross_fusion_proj.weight.data)
-        # constant_(self.cross_fusion_proj.bias.data, 0.0)
+        self.cross_fusion_proj = nn.Linear(2 * d_model, d_model) 
+        xavier_uniform_(self.cross_fusion_proj.weight.data)
+        constant_(self.cross_fusion_proj.bias.data, 0.0)
 
     @staticmethod
     def with_pos_embed(tensor, pos):
@@ -427,11 +421,11 @@ class DeformableTransformerDecoderLayer(nn.Module):
             # cross attention
             tgt2 = self.cross_attn(self.with_pos_embed(tgt, query_pos),
                                    reference_points, src, src_spatial_shapes, level_start_index, src_padding_mask)
-            tgt = tgt + self.dropout1(tgt2)
-            # tgt2 = self.dropout1(tgt2)
-            # tgt = self.cross_fusion_proj(
-            #     torch.cat([tgt2, tgt], dim=2)
-            # )
+            # tgt = tgt + self.dropout1(tgt2)
+            tgt2 = self.dropout1(tgt2)
+            tgt = self.cross_fusion_proj(
+                torch.cat([tgt2, tgt], dim=2)
+            )
             tgt = self.norm1(tgt)
 
             if self.use_aux_ffn:
