@@ -129,37 +129,7 @@ class DeformableTransformer(nn.Module):
         valid_ratio_w = valid_W.float() / W
         valid_ratio = torch.stack([valid_ratio_w, valid_ratio_h], -1)
         return valid_ratio
-    def cascade_stage(
-        self,
-        stage_idx,
-        # encoder part
-        enc_src, 
-        enc_query,
-        enc_reference_points, 
-        enc_pos, 
-        enc_padding_mask,
-        topk_enc_token_indice,
-        valid_enc_token_num,
-        # decoder part
-        dec_tgt, 
-        dec_reference_points, 
-        dec_query_pos, 
-        # common part
-        spatial_shapes, 
-        level_start_index, 
-        valid_ratios,
-        **kwargs
-        ):
-        memory = self.encoder.cascade_stage_forward(stage_idx, enc_src, enc_query, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask, topk_enc_token_indice, valid_enc_token_num)
 
-        # decoder
-        dec_hs_o2o, dec_hs_o2m, dec_ref, dec_new_ref, dec_sampling_locations, dec_attention_weights= \
-            self.decoder.cascade_stage_forward(stage_idx, dec_tgt, dec_reference_points, memory,
-                spatial_shapes, level_start_index, valid_ratios, dec_query_pos, enc_padding_mask, **kwargs)
-        
-        return memory, dec_hs_o2o, dec_hs_o2m, dec_ref, dec_new_ref, dec_sampling_locations, dec_attention_weights
-
-         
 
     def forward(self, srcs, masks, pos_embeds, query_embed=None, **kwargs):
         assert self.two_stage or query_embed is not None
@@ -229,71 +199,53 @@ class DeformableTransformer(nn.Module):
             tgt = tgt.unsqueeze(0).expand(bs, -1, -1)
             reference_points = self.reference_points(query_embed).sigmoid()
             init_reference_out = reference_points
-        dec_tgt = tgt
+        init_dec_tgt = tgt
         dec_query_pos = query_embed
-        dec_reference_points = reference_points
+        init_dec_reference_points = reference_points
         # decoder
         dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref, dec_sampling_locations, dec_attention_weights= \
-            self.decoder.cascade_stage_forward(0, dec_tgt, dec_reference_points, memory,
+            self.decoder.cascade_stage_forward(0, init_dec_tgt, init_dec_reference_points, memory,
                 spatial_shapes, level_start_index, valid_ratios, dec_query_pos, enc_padding_mask, **kwargs)
 
         hs_o2o.append(dec_query_o2o)
         hs_o2m.append(dec_query_o2m)
         inter_references.append(dec_new_ref if self.decoder.look_forward_twice else dec_ref)
         # >>===================== End 1st detection stage=====================
-
+        
         # >>===================== Start following detection stage=====================
+        
+        # ==== select tokens =====
         valid_tokens_nums_all_imgs = (~mask_flatten).int().sum(dim=1)
-        for stage_idx in range(1, self.num_detection_stages):
-
-            dec_sampling_locations = dec_sampling_locations[:, None]
-            dec_attention_weights = dec_attention_weights[:, None]
+        dec_sampling_locations = dec_sampling_locations[:, None]
+        dec_attention_weights = dec_attention_weights[:, None]
                 
-            # (bs, 1, num_head, num_all_lvl_tokens) -> (bs, num_all_lvl_tokens)
-            cross_attn_map = attn_map_to_flat_grid(spatial_shapes, level_start_index, dec_sampling_locations, dec_attention_weights).sum(dim=(1,2))
-            assert cross_attn_map.size() == mask_flatten.size()
-            cross_attn_map = cross_attn_map.masked_fill(mask_flatten, cross_attn_map.min()-1)
+        # (bs, 1, num_head, num_all_lvl_tokens) -> (bs, num_all_lvl_tokens)
+        cross_attn_map = attn_map_to_flat_grid(spatial_shapes, level_start_index, dec_sampling_locations, dec_attention_weights).sum(dim=(1,2))
+        assert cross_attn_map.size() == mask_flatten.size()
+        cross_attn_map = cross_attn_map.masked_fill(mask_flatten, cross_attn_map.min()-1)
 
-            valid_enc_token_num =  (valid_tokens_nums_all_imgs * 0.1 ).int() + 1
-            batch_token_num = max(valid_enc_token_num)
-            topk_enc_token_indice = cross_attn_map.topk(batch_token_num, dim=1)[1] # (bs, batch_token_num)
-            sparse_enc_query = memory.gather(dim=1, index=topk_enc_token_indice.unsqueeze(dim=2).repeat(1, 1, self.d_model))
-            sparse_enc_query_pos = lvl_pos_embed_flatten.gather(dim=1, index=topk_enc_token_indice.unsqueeze(dim=2).repeat(1, 1, self.d_model))
-            num_lvl = enc_reference_points.size(2)
-            sparse_enc_ref = enc_reference_points.gather(dim=1, index=topk_enc_token_indice.unsqueeze(dim=2).unsqueeze(dim=3).repeat(1, 1, num_lvl, 2)) # (x, y) for ref points
+        valid_enc_token_num =  (valid_tokens_nums_all_imgs * 0.1 ).int() + 1
+        batch_token_num = max(valid_enc_token_num)
+        topk_enc_token_indice = cross_attn_map.topk(batch_token_num, dim=1)[1] # (bs, batch_token_num)
 
 
-            memory, dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref, dec_sampling_locations, dec_attention_weights = \
-                self.cascade_stage(
-                    stage_idx,
-                    # encoder part
-                    enc_src=memory, 
-                    enc_query=sparse_enc_query,
-                    enc_reference_points=sparse_enc_ref, 
-                    enc_pos=sparse_enc_query_pos, 
-                    enc_padding_mask=enc_padding_mask,
-                    # decoder part
-                    dec_tgt=dec_query_o2o, 
-                    dec_reference_points=dec_ref, 
-                    dec_query_pos=dec_query_pos, 
-                    # common part
-                    spatial_shapes=spatial_shapes, 
-                    level_start_index=level_start_index, 
-                    valid_ratios=valid_ratios,
-                    topk_enc_token_indice=topk_enc_token_indice,
-                    valid_enc_token_num=valid_enc_token_num,
-                    **kwargs
-                ) 
+        # remaining encoder
+        start_layer_idx = 1
+        memory = self.encoder(start_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, 
+                              lvl_pos_embed_flatten, mask_flatten, topk_enc_token_indice, valid_enc_token_num)
 
-            hs_o2o.append(dec_query_o2o)
-            hs_o2m.append(dec_query_o2m)
-            inter_references.append(dec_new_ref if self.decoder.look_forward_twice else dec_ref)
+        # remaining decoder
+        hs_o2o_, hs_o2m_, inter_references_ = self.decoder(start_layer_idx, dec_query_o2o, dec_ref, memory,
+                                            spatial_shapes, level_start_index, valid_ratios, dec_query_pos, mask_flatten, **kwargs)
+        # >>===================== End following detection stage=====================
+        hs_o2o = hs_o2o + hs_o2o_
+        hs_o2m = hs_o2m + hs_o2m_
+        inter_references = inter_references + inter_references_
 
         inter_references = torch.stack(inter_references)
         hs_o2m = torch.stack(hs_o2m)
         hs_o2o = torch.stack(hs_o2o)
         inter_references_out = inter_references
-        # >>===================== End following detection stage=====================
         # ===================== End cascade detection stage =====================
         if self.two_stage:
             return hs_o2o, hs_o2m, init_reference_out, inter_references_out, enc_outputs_class, enc_outputs_coord_unact, output_proposals.sigmoid(),
@@ -334,8 +286,6 @@ class DeformableTransformerEncoderLayer(nn.Module):
         # self attention
         src2, _, _ = self.self_attn(self.with_pos_embed(query, pos), reference_points, src, spatial_shapes, level_start_index, padding_mask)
         if topk_enc_token_indice is not None:
-            assert valid_enc_token_num is not None
-            bs = topk_enc_token_indice.size(0) 
             outputs=[]
             for img_id, (num, idx) in enumerate(zip(valid_enc_token_num, topk_enc_token_indice)):
                 valid_idx = idx[:num]
@@ -375,17 +325,27 @@ class DeformableTransformerEncoder(nn.Module):
         reference_points = reference_points[:, :, None] * valid_ratios[:, None]
         return reference_points
 
-    def forward(self, src, spatial_shapes, level_start_index, valid_ratios, pos=None, padding_mask=None):
+    def forward(self, start_layer_idx, reference_points, src, spatial_shapes, level_start_index, valid_ratios, 
+                pos, padding_mask, topk_enc_token_indice, valid_enc_token_num):
+
         output = src
-        reference_points = self.get_reference_points(spatial_shapes, valid_ratios, device=src.device)
-        for _, layer in enumerate(self.layers):
-            output = layer(output, pos, reference_points, spatial_shapes, level_start_index, padding_mask)
+        num_lvl = reference_points.size(2)
+        d_model = src.size(2)
+        # get sparse tokens
+        sparse_enc_query_pos = pos.gather(dim=1, index=topk_enc_token_indice.unsqueeze(dim=2).repeat(1, 1, d_model))
+        sparse_enc_ref = reference_points.gather(dim=1, index=topk_enc_token_indice.unsqueeze(dim=2).unsqueeze(dim=3).repeat(1, 1, num_lvl, 2)) # (x, y) for ref points
+
+        for layer_idx in range(start_layer_idx, self.num_layers):
+            sparse_enc_query = output.gather(dim=1, index=topk_enc_token_indice.unsqueeze(dim=2).repeat(1, 1, d_model))
+            output = self.layers[layer_idx]( output, sparse_enc_query, sparse_enc_query_pos, sparse_enc_ref, spatial_shapes,
+                                             level_start_index, padding_mask, topk_enc_token_indice, valid_enc_token_num)
 
         return output
-    def cascade_stage_forward(self, stage_idx, src, query, spatial_shapes, level_start_index, reference_points, pos, padding_mask, topk_enc_token_indice=None, valid_enc_token_num=None):
+
+    def cascade_stage_forward(self, stage_idx, src, query, spatial_shapes, level_start_index, reference_points, pos, padding_mask):
         # when use sparse tokens, src is not equivalent to query
         layer = self.layers[stage_idx]
-        output = layer(src, query, pos, reference_points, spatial_shapes, level_start_index, padding_mask, topk_enc_token_indice, valid_enc_token_num)
+        output = layer(src, query, pos, reference_points, spatial_shapes, level_start_index, padding_mask)
 
         return output
 
@@ -497,21 +457,22 @@ class DeformableTransformerDecoder(nn.Module):
         self.look_forward_twice = look_forward_twice
         self.use_ms_detr = use_ms_detr
 
-    def forward(self, tgt, reference_points, src, src_spatial_shapes, src_level_start_index, src_valid_ratios,
+    def forward(self, start_layer_idx, tgt, reference_points, src, src_spatial_shapes, src_level_start_index, src_valid_ratios,
                 query_pos=None, src_padding_mask=None, **kwargs):
         output = tgt
 
         intermediate = []
         intermediate_o2m = []
         intermediate_reference_points = []
-        for lid, layer in enumerate(self.layers):
+        for lid in range(start_layer_idx, self.num_layers):
+            layer = self.layers[lid]
             if reference_points.shape[-1] == 4:
                 reference_points_input = reference_points[:, :, None] \
                                          * torch.cat([src_valid_ratios, src_valid_ratios], -1)[:, None]
             else:
                 assert reference_points.shape[-1] == 2
                 reference_points_input = reference_points[:, :, None] * src_valid_ratios[:, None]
-            output, output_o2m = layer(output, query_pos, reference_points_input, src, src_spatial_shapes, src_level_start_index, src_padding_mask, **kwargs)
+            output, output_o2m, _, _ = layer(output, query_pos, reference_points_input, src, src_spatial_shapes, src_level_start_index, src_padding_mask, **kwargs)
 
             # hack implementation for iterative bounding box refinement
             if self.bbox_embed is not None:
@@ -534,9 +495,9 @@ class DeformableTransformerDecoder(nn.Module):
                     if self.look_forward_twice
                     else reference_points
                 )
-
+        assert self.return_intermediate
         if self.return_intermediate:
-            return torch.stack(intermediate), torch.stack(intermediate_o2m), torch.stack(intermediate_reference_points)
+            return intermediate, intermediate_o2m, intermediate_reference_points
 
         return output, output_o2m, reference_points
 
