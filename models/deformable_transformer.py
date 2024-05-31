@@ -64,6 +64,7 @@ class DeformableTransformer(nn.Module):
 
         # multiscale sampler
         self.multi_scale_sampler = MultiScaleSampler(d_model, num_feature_levels, 1, 1)
+        self.post_norm = nn.LayerNorm(d_model) 
 
 
     def _reset_parameters(self):
@@ -200,7 +201,10 @@ class DeformableTransformer(nn.Module):
         # >>===================== Start 1st detection stage=====================
 
         # use multi-scale sampler
-        memory = self.multi_scale_sampler(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
+        sampled_memory = self.multi_scale_sampler(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
+        memory = memory + sampled_memory
+        memory = self.post_norm(memory)
+
 
         memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
         # prepare input for 1st decoder stage

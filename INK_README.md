@@ -18,6 +18,12 @@ only use 1 head
 ## v1.2
 Based on v1.0, discard FFN.
 
+## v1.2.1
+v1.2 does not use residual add. Only the sampled memory is feed to the following encoder & decoder.
+
+In this version:
+MultiScaleSampler + residual add + layernorm
+
 
 # v2 FPN-like MultiScaleAligner
 ## v2.1
