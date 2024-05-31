@@ -63,9 +63,7 @@ class DeformableTransformer(nn.Module):
         assert self.num_detection_stages == len( self.decoder.layers )
 
         # multiscale sampler
-        self.multi_scale_sampler = MultiScaleSampler(d_model, num_feature_levels, 1, 4)
-        self.dropout1 = nn.Dropout(dropout)
-        self.norm1 = nn.LayerNorm(d_model)
+        self.multi_scale_sampler = MultiScaleSampler(d_model, num_feature_levels, 1, 1)
 
 
     def _reset_parameters(self):
