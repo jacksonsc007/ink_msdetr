@@ -15,6 +15,9 @@ Use multi_scale_sampler (v1.4 in branch asymmetric_enc_dec )proposed in branch a
 
 only use 1 head
 
+## v1.2
+Based on v1.0, discard FFN.
+
 
 # v2 FPN-like MultiScaleAligner
 ## v2.1
