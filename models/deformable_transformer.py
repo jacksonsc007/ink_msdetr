@@ -17,7 +17,8 @@ from torch import nn, Tensor
 from torch.nn.init import xavier_uniform_, constant_, uniform_, normal_
 
 from util.misc import inverse_sigmoid
-from models.ops.modules import MSDeformAttn
+
+from models.ops.modules import MSDeformAttn, MultiScaleSampler
 # from config import *
 
 
@@ -61,6 +62,25 @@ class DeformableTransformer(nn.Module):
 
         self.num_detection_stages = len( self.encoder.layers )
         assert self.num_detection_stages == len( self.decoder.layers )
+
+        # multiscale sampler
+        self.multi_scale_sampler = MultiScaleSampler(d_model, num_feature_levels, nhead, 1)
+        self.dropout1 = nn.Dropout(dropout)
+        self.norm1 = nn.LayerNorm(d_model)
+
+        # ffn
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.activation = _get_activation_fn(activation)
+        self.dropout2 = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+        self.dropout3 = nn.Dropout(dropout)
+        self.norm2 = nn.LayerNorm(d_model)
+
+    def forward_ffn(self, src):
+        src2 = self.linear2(self.dropout2(self.activation(self.linear1(src))))
+        src = src + self.dropout3(src2)
+        src = self.norm2(src)
+        return src
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -194,7 +214,14 @@ class DeformableTransformer(nn.Module):
         enc_reference_points = self.encoder.get_reference_points(spatial_shapes, valid_ratios, device=src_flatten.device)
 
         # >>===================== Start 1st detection stage=====================
+
+        # use multi-scale sampler
+        sampled_feat = self.multi_scale_sampler(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
+        memory = memory + self.dropout1(sampled_feat)
+        memory = self.norm1(memory)
+        memory = self.forward_ffn(memory)
         memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
+
         # prepare input for 1st decoder stage
         bs, _, c = memory.shape
         if self.two_stage:

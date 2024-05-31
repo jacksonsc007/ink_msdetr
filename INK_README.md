@@ -1,3 +1,1 @@
-Branch name: hybrid_cascade_msdetr
-
-# v1.0
+Test if multiscalesampler (v1.4 1head) works with hybrid cascade struture (v1.0)
