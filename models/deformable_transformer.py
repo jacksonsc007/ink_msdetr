@@ -62,8 +62,11 @@ class DeformableTransformer(nn.Module):
         self.num_detection_stages = len( self.encoder.layers )
         assert self.num_detection_stages == len( self.decoder.layers )
 
-        self.fusion_proj = nn.Linear(d_model * 2, d_model)
-        self.fusion_norm = nn.LayerNorm(d_model)
+        self.fusion_proj1 = nn.Linear(d_model * 2, d_model)
+        self.fusion_norm1 = nn.LayerNorm(d_model)
+
+        self.fusion_proj2 = nn.Linear(d_model * 3, d_model)
+        self.fusion_norm2 = nn.LayerNorm(d_model)
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -232,9 +235,12 @@ class DeformableTransformer(nn.Module):
         init_dec_tgt = tgt
         dec_query_pos = query_embed
         init_dec_reference_points = reference_points
+
+        dec_memory = self.fusion_proj1( torch.cat([src_flatten, memory], dim=2))
+        dec_memory = self.fusion_norm1(dec_memory)
         # decoder
         dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref= \
-            self.decoder.cascade_stage_forward(0, init_dec_tgt, init_dec_reference_points, memory,
+            self.decoder.cascade_stage_forward(0, init_dec_tgt, init_dec_reference_points, dec_memory,
                 spatial_shapes, level_start_index, valid_ratios, dec_query_pos, enc_padding_mask, **kwargs)
 
         hs_o2o.append(dec_query_o2o)
@@ -248,12 +254,12 @@ class DeformableTransformer(nn.Module):
         start_layer_idx = 1
         memory = self.encoder(start_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
 
-        memory = torch.cat( [memory_first, memory], dim=2)
-        memory = self.fusion_proj(memory)
-        memory = self.fusion_norm(memory)
+        dec_memory = torch.cat( [src_flatten, memory_first, memory], dim=2)
+        dec_memory = self.fusion_proj2(dec_memory)
+        dec_memory = self.fusion_norm2(dec_memory)
 
         # remaining decoder
-        hs_o2o_, hs_o2m_, inter_references_ = self.decoder(start_layer_idx, dec_query_o2o, dec_ref, memory,
+        hs_o2o_, hs_o2m_, inter_references_ = self.decoder(start_layer_idx, dec_query_o2o, dec_ref, dec_memory,
                                             spatial_shapes, level_start_index, valid_ratios, dec_query_pos, mask_flatten, **kwargs)
         # >>===================== End following detection stage=====================
         hs_o2o = hs_o2o + hs_o2o_
