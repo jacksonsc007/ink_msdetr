@@ -62,6 +62,9 @@ class DeformableTransformer(nn.Module):
         self.num_detection_stages = len( self.encoder.layers )
         assert self.num_detection_stages == len( self.decoder.layers )
 
+        self.fusion_proj = nn.Linear(d_model * 2, d_model)
+        self.fusion_norm = nn.LayerNorm(d_model)
+
     def _reset_parameters(self):
         for p in self.parameters():
             if p.dim() > 1:
@@ -238,11 +241,16 @@ class DeformableTransformer(nn.Module):
         hs_o2m.append(dec_query_o2m)
         inter_references.append(dec_new_ref if self.decoder.look_forward_twice else dec_ref)
         # >>===================== End 1st detection stage=====================
+        memory_first = memory
         
         # >>===================== Start following detection stage=====================
         # remaining encoder
         start_layer_idx = 1
         memory = self.encoder(start_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
+
+        memory = torch.cat( [memory_first, memory], dim=2)
+        memory = self.fusion_proj(memory)
+        memory = self.fusion_norm(memory)
 
         # remaining decoder
         hs_o2o_, hs_o2m_, inter_references_ = self.decoder(start_layer_idx, dec_query_o2o, dec_ref, memory,

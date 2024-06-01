@@ -1,3 +1,1 @@
-Branch name: hybrid_cascade_msdetr
-
-# v1.0
+Test if stage aligner works with hybrid cascade struture (v1.0)
