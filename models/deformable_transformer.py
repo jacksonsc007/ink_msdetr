@@ -59,8 +59,7 @@ class DeformableTransformer(nn.Module):
 
         self._reset_parameters()
 
-        self.num_detection_stages = len( self.encoder.layers )
-        assert self.num_detection_stages == len( self.decoder.layers )
+        self.num_detection_stages = len( self.decoder.layers )
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -194,7 +193,7 @@ class DeformableTransformer(nn.Module):
         enc_reference_points = self.encoder.get_reference_points(spatial_shapes, valid_ratios, device=src_flatten.device)
 
         # >>===================== Start 1st detection stage=====================
-        memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
+        # memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
         # prepare input for 1st decoder stage
         bs, _, c = memory.shape
         if self.two_stage:
@@ -240,19 +239,18 @@ class DeformableTransformer(nn.Module):
         # >>===================== End 1st detection stage=====================
         
         # >>===================== Start following detection stage=====================
-        for start_layer_idx, end_layer_idx in ((1, 2), (3, 5)):
-            # remaining encoder
-            memory = self.encoder(start_layer_idx, end_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
+        # remaining encoder
+        enc_start_layer_idx = 0
+        dec_start_layer_idx = 1
+        memory = self.encoder(enc_start_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
 
-            # remaining decoder
-            hs_o2o_, hs_o2m_, inter_references_ = self.decoder(start_layer_idx, end_layer_idx, dec_query_o2o, dec_ref, memory,
-                                                spatial_shapes, level_start_index, valid_ratios, dec_query_pos, mask_flatten, **kwargs)
-            dec_query_o2o = hs_o2o_[-1]
-            dec_ref = inter_references_[-1].detach()
-            # >>===================== End following detection stage=====================
-            hs_o2o = hs_o2o + hs_o2o_
-            hs_o2m = hs_o2m + hs_o2m_
-            inter_references = inter_references + inter_references_
+        # remaining decoder
+        hs_o2o_, hs_o2m_, inter_references_ = self.decoder(dec_start_layer_idx, dec_query_o2o, dec_ref, memory,
+                                            spatial_shapes, level_start_index, valid_ratios, dec_query_pos, mask_flatten, **kwargs)
+        # >>===================== End following detection stage=====================
+        hs_o2o = hs_o2o + hs_o2o_
+        hs_o2m = hs_o2m + hs_o2m_
+        inter_references = inter_references + inter_references_
 
         inter_references = torch.stack(inter_references)
         hs_o2m = torch.stack(hs_o2m)
@@ -327,9 +325,9 @@ class DeformableTransformerEncoder(nn.Module):
         reference_points = reference_points[:, :, None] * valid_ratios[:, None]
         return reference_points
 
-    def forward(self, start_layer_idx, end_layer_idx, reference_points, src, spatial_shapes, level_start_index, valid_ratios, pos=None, padding_mask=None):
+    def forward(self, start_layer_idx, reference_points, src, spatial_shapes, level_start_index, valid_ratios, pos=None, padding_mask=None):
         output = src
-        for layer_idx in range(start_layer_idx, end_layer_idx + 1):
+        for layer_idx in range(start_layer_idx, self.num_layers):
             layer = self.layers[layer_idx]
             output = layer(output, pos, reference_points, spatial_shapes, level_start_index, padding_mask)
 
@@ -446,14 +444,14 @@ class DeformableTransformerDecoder(nn.Module):
         self.look_forward_twice = look_forward_twice
         self.use_ms_detr = use_ms_detr
 
-    def forward(self, start_layer_idx, end_layer_idx, tgt, reference_points, src, src_spatial_shapes, src_level_start_index, src_valid_ratios,
+    def forward(self, start_layer_idx, tgt, reference_points, src, src_spatial_shapes, src_level_start_index, src_valid_ratios,
                 query_pos=None, src_padding_mask=None, **kwargs):
         output = tgt
 
         intermediate = []
         intermediate_o2m = []
         intermediate_reference_points = []
-        for lid in range(start_layer_idx, end_layer_idx + 1):
+        for lid in range(start_layer_idx, self.num_layers):
             layer = self.layers[lid]
             if reference_points.shape[-1] == 4:
                 reference_points_input = reference_points[:, :, None] \
