@@ -248,7 +248,6 @@ class DeformableTransformer(nn.Module):
         inter_references.append(dec_new_ref if self.decoder.look_forward_twice else dec_ref)
         # >>===================== End 1st detection stage=====================
         
-        memory = self.multi_scale_sampler2(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
 
         # >>===================== Start following detection stage=====================
         # remaining encoder
@@ -256,6 +255,7 @@ class DeformableTransformer(nn.Module):
         dec_start_layer_idx = 1
         memory = self.encoder(enc_start_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
 
+        memory = self.multi_scale_sampler2(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
         # remaining decoder
         hs_o2o_, hs_o2m_, inter_references_ = self.decoder(dec_start_layer_idx, dec_query_o2o, dec_ref, memory,
                                             spatial_shapes, level_start_index, valid_ratios, dec_query_pos, mask_flatten, **kwargs)
