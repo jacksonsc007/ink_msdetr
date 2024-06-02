@@ -26,9 +26,18 @@ def _is_power_of_2(n):
         raise ValueError("invalid input for _is_power_of_2: {} (type: {})".format(n, type(n)))
     return (n & (n-1) == 0) and n != 0
 
+def _get_activation_fn(activation):
+    """Return an activation function given a string"""
+    if activation == "relu":
+        return F.relu
+    if activation == "gelu":
+        return F.gelu
+    if activation == "glu":
+        return F.glu
+    raise RuntimeError(F"activation should be relu/gelu, not {activation}.")
 
 class MultiScaleSampler(nn.Module):
-    def __init__(self, d_model=256, n_levels=4, n_heads=8, n_points=1):
+    def __init__(self, d_model=256, n_levels=4, n_heads=8, n_points=1, dim_feedforward=1024, dropout=0.0, activation="relu"):
         """
         Multi-Scale Deformable Attention Module
         :param d_model      hidden dimension
@@ -55,7 +64,24 @@ class MultiScaleSampler(nn.Module):
         self.value_proj = nn.Linear(d_model, d_model)
         self.output_proj = nn.Linear(d_model, d_model)
 
+        self.dropout1 = nn.Dropout(dropout)
+        self.norm1 = nn.LayerNorm(d_model)
+
+        # ffn
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.activation = _get_activation_fn(activation)
+        self.dropout2 = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+        self.dropout3 = nn.Dropout(dropout)
+        self.norm2 = nn.LayerNorm(d_model)
+
         self._reset_parameters()
+
+    def forward_ffn(self, src):
+        src2 = self.linear2(self.dropout2(self.activation(self.linear1(src))))
+        src = src + self.dropout3(src2)
+        src = self.norm2(src)
+        return src
 
     def _reset_parameters(self):
         xavier_uniform_(self.value_proj.weight.data)
@@ -90,6 +116,11 @@ class MultiScaleSampler(nn.Module):
         output = MSDeformAttnFunction.apply(
             value, input_spatial_shapes, input_level_start_index, sampling_locations, attention_weights, self.im2col_step)
         output = self.output_proj(output)
+
+        # residual add
+        output = input_flatten + self.dropout1(output)
+        output = self.norm1(output)
+        output = self.forward_ffn(output)
         return output
 
 class MSDeformAttn(nn.Module):

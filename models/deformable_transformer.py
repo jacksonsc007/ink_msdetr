@@ -22,6 +22,7 @@ from models.ops.modules import MSDeformAttn, MultiScaleSampler
 # from config import *
 
 
+
 class DeformableTransformer(nn.Module):
     def __init__(self, d_model=256, nhead=8,
                  num_encoder_layers=6, num_decoder_layers=6, dim_feedforward=1024, dropout=0.1,
@@ -63,23 +64,8 @@ class DeformableTransformer(nn.Module):
         self.num_detection_stages = len( self.decoder.layers )
 
         # multiscale sampler
-        self.multi_scale_sampler = MultiScaleSampler(d_model, num_feature_levels, 1, 1)
-        self.dropout1 = nn.Dropout(dropout)
-        self.norm1 = nn.LayerNorm(d_model)
-
-        # ffn
-        self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.activation = _get_activation_fn(activation)
-        self.dropout2 = nn.Dropout(dropout)
-        self.linear2 = nn.Linear(dim_feedforward, d_model)
-        self.dropout3 = nn.Dropout(dropout)
-        self.norm2 = nn.LayerNorm(d_model)
-
-    def forward_ffn(self, src):
-        src2 = self.linear2(self.dropout2(self.activation(self.linear1(src))))
-        src = src + self.dropout3(src2)
-        src = self.norm2(src)
-        return src
+        self.multi_scale_sampler1 = MultiScaleSampler(d_model, num_feature_levels, 1, 1, dim_feedforward, dropout, activation)
+        self.multi_scale_sampler2 = MultiScaleSampler(d_model, num_feature_levels, 1, 1, dim_feedforward, dropout, activation)
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -215,10 +201,7 @@ class DeformableTransformer(nn.Module):
         # >>===================== Start 1st detection stage=====================
 
         # use multi-scale sampler
-        sampled_feat = self.multi_scale_sampler(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
-        memory = memory + self.dropout1(sampled_feat)
-        memory = self.norm1(memory)
-        memory = self.forward_ffn(memory)
+        memory = self.multi_scale_sampler1(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
         # memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
 
         # prepare input for 1st decoder stage
@@ -265,6 +248,8 @@ class DeformableTransformer(nn.Module):
         inter_references.append(dec_new_ref if self.decoder.look_forward_twice else dec_ref)
         # >>===================== End 1st detection stage=====================
         
+        memory = self.multi_scale_sampler2(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
+
         # >>===================== Start following detection stage=====================
         # remaining encoder
         enc_start_layer_idx = 0
