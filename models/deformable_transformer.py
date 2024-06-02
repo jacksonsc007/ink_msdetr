@@ -65,7 +65,7 @@ class DeformableTransformer(nn.Module):
         self.fusion_proj1 = nn.Linear(d_model * 2, d_model)
         self.fusion_norm1 = nn.LayerNorm(d_model)
 
-        self.fusion_proj2 = nn.Linear(d_model * 3, d_model)
+        self.fusion_proj2 = nn.Linear(d_model * 7, d_model)
         self.fusion_norm2 = nn.LayerNorm(d_model)
 
     def _reset_parameters(self):
@@ -252,9 +252,9 @@ class DeformableTransformer(nn.Module):
         # >>===================== Start following detection stage=====================
         # remaining encoder
         start_layer_idx = 1
-        memory = self.encoder(start_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
+        memory, memory_history = self.encoder(start_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
 
-        dec_memory = torch.cat( [src_flatten, memory_first, memory], dim=2)
+        dec_memory = torch.cat( [src_flatten, memory_first, memory_history], dim=2)
         dec_memory = self.fusion_proj2(dec_memory)
         dec_memory = self.fusion_norm2(dec_memory)
 
@@ -341,11 +341,14 @@ class DeformableTransformerEncoder(nn.Module):
 
     def forward(self, start_layer_idx, reference_points, src, spatial_shapes, level_start_index, valid_ratios, pos=None, padding_mask=None):
         output = src
+        memory_history = []
         for layer_idx in range(start_layer_idx, self.num_layers):
             layer = self.layers[layer_idx]
             output = layer(output, pos, reference_points, spatial_shapes, level_start_index, padding_mask)
+            memory_history.append(output)
+        memory_history = torch.cat(memory_history, dim=-1)
 
-        return output
+        return output, memory_history
     def cascade_stage_forward(self, stage_idx, src, spatial_shapes, level_start_index, reference_points, pos, padding_mask):
         layer = self.layers[stage_idx]
         output = layer(src, pos, reference_points, spatial_shapes, level_start_index, padding_mask)
