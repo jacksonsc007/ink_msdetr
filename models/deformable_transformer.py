@@ -60,11 +60,10 @@ class DeformableTransformer(nn.Module):
 
         self._reset_parameters()
 
-        self.num_detection_stages = len( self.encoder.layers )
-        assert self.num_detection_stages == len( self.decoder.layers )
+        self.num_detection_stages = len( self.decoder.layers )
 
         # multiscale sampler
-        self.multi_scale_sampler = MultiScaleSampler(d_model, num_feature_levels, nhead, 1)
+        self.multi_scale_sampler = MultiScaleSampler(d_model, num_feature_levels, 1, 1)
         self.dropout1 = nn.Dropout(dropout)
         self.norm1 = nn.LayerNorm(d_model)
 
@@ -220,7 +219,7 @@ class DeformableTransformer(nn.Module):
         memory = memory + self.dropout1(sampled_feat)
         memory = self.norm1(memory)
         memory = self.forward_ffn(memory)
-        memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
+        # memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
 
         # prepare input for 1st decoder stage
         bs, _, c = memory.shape
@@ -268,11 +267,12 @@ class DeformableTransformer(nn.Module):
         
         # >>===================== Start following detection stage=====================
         # remaining encoder
-        start_layer_idx = 1
-        memory = self.encoder(start_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
+        enc_start_layer_idx = 0
+        dec_start_layer_idx = 1
+        memory = self.encoder(enc_start_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
 
         # remaining decoder
-        hs_o2o_, hs_o2m_, inter_references_ = self.decoder(start_layer_idx, dec_query_o2o, dec_ref, memory,
+        hs_o2o_, hs_o2m_, inter_references_ = self.decoder(dec_start_layer_idx, dec_query_o2o, dec_ref, memory,
                                             spatial_shapes, level_start_index, valid_ratios, dec_query_pos, mask_flatten, **kwargs)
         # >>===================== End following detection stage=====================
         hs_o2o = hs_o2o + hs_o2o_
