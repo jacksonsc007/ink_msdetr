@@ -215,7 +215,7 @@ class DeformableTransformer(nn.Module):
         # >>===================== Start 1st detection stage=====================
 
         # use multi-scale sampler
-        sampled_feat = self.multi_scale_sampler(memory + enc_pos, memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
+        sampled_feat = self.multi_scale_sampler(memory, memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
         memory = memory + self.dropout1(sampled_feat)
         memory = self.norm1(memory)
         memory = self.forward_ffn(memory)
