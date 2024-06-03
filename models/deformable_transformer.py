@@ -202,6 +202,8 @@ class DeformableTransformer(nn.Module):
 
         # use multi-scale sampler for backbone feature
         memory = self.multi_scale_sampler1(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
+        memory = self.multi_scale_sampler2(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
+
         memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
 
         # prepare input for 1st decoder stage
@@ -248,8 +250,6 @@ class DeformableTransformer(nn.Module):
         inter_references.append(dec_new_ref if self.decoder.look_forward_twice else dec_ref)
         # >>===================== End 1st detection stage=====================
         
-        # use multi-scale sampler for output of 1st encoder 
-        memory = self.multi_scale_sampler2(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
 
         # >>===================== Start following detection stage=====================
         # remaining encoder
