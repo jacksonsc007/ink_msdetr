@@ -200,9 +200,9 @@ class DeformableTransformer(nn.Module):
 
         # >>===================== Start 1st detection stage=====================
 
-        # use multi-scale sampler
+        # use multi-scale sampler for backbone feature
         memory = self.multi_scale_sampler1(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
-        # memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
+        memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
 
         # prepare input for 1st decoder stage
         bs, _, c = memory.shape
@@ -248,14 +248,15 @@ class DeformableTransformer(nn.Module):
         inter_references.append(dec_new_ref if self.decoder.look_forward_twice else dec_ref)
         # >>===================== End 1st detection stage=====================
         
+        # use multi-scale sampler for output of 1st encoder 
+        memory = self.multi_scale_sampler2(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
 
         # >>===================== Start following detection stage=====================
         # remaining encoder
-        enc_start_layer_idx = 0
+        enc_start_layer_idx = 1
         dec_start_layer_idx = 1
         memory = self.encoder(enc_start_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
 
-        memory = self.multi_scale_sampler2(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
         # remaining decoder
         hs_o2o_, hs_o2m_, inter_references_ = self.decoder(dec_start_layer_idx, dec_query_o2o, dec_ref, memory,
                                             spatial_shapes, level_start_index, valid_ratios, dec_query_pos, mask_flatten, **kwargs)
