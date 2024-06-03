@@ -28,7 +28,7 @@ def _is_power_of_2(n):
 
 
 class MultiScaleSampler(nn.Module):
-    def __init__(self, d_model=256, n_levels=4, n_heads=8, n_points=1):
+    def __init__(self, d_model=256, n_levels=4, n_heads=8, n_points=4):
         """
         Multi-Scale Deformable Attention Module
         :param d_model      hidden dimension
@@ -52,21 +52,22 @@ class MultiScaleSampler(nn.Module):
         self.n_heads = n_heads
         self.n_points = n_points
 
+        assert self.n_points == 4, "In this version, points are fixed to 4"
+        assert self.n_heads == 1, "In this version, points are fixed to 1"
+
         self.value_proj = nn.Linear(d_model, d_model)
         self.output_proj = nn.Linear(d_model, d_model)
-        self.sampling_weights = nn.Linear(d_model, n_heads * n_levels * n_points)
 
         self._reset_parameters()
+
 
     def _reset_parameters(self):
         xavier_uniform_(self.value_proj.weight.data)
         constant_(self.value_proj.bias.data, 0.)
         xavier_uniform_(self.output_proj.weight.data)
         constant_(self.output_proj.bias.data, 0.)
-        xavier_uniform_(self.sampling_weights.weight.data)
-        constant_(self.sampling_weights.bias.data, 0.)
 
-    def forward(self, query, input_flatten, reference_points, input_spatial_shapes, input_level_start_index, input_padding_mask=None):
+    def forward(self, input_flatten, reference_points, input_spatial_shapes, input_level_start_index, input_padding_mask=None):
         """
         :param query                       (N, Length_{query}, C)
         :param reference_points            (N, Length_{query}, n_levels, 2), range in [0, 1], top-left (0,0), bottom-right (1, 1), including padding area
@@ -85,13 +86,24 @@ class MultiScaleSampler(nn.Module):
         if input_padding_mask is not None:
             value = value.masked_fill(input_padding_mask[..., None], float(0))
         value = value.view(N, Len_in, self.n_heads, self.d_model // self.n_heads)
-        sampling_weights = self.sampling_weights(query).view(N, Len_in, self.n_heads, self.n_levels * self.n_points)
-        sampling_weights = F.softmax(sampling_weights, -1).view(N, Len_in, self.n_heads, self.n_levels, self.n_points)
+        attention_weights = torch.ones(N, Len_in, self.n_heads, self.n_levels * self.n_points, device=value.device)
+        attention_weights = F.softmax(attention_weights, -1).view(N, Len_in, self.n_heads, self.n_levels, self.n_points)
         # N, Len_q, n_heads, n_levels, n_points, 2
         assert reference_points.shape[-1] == 2
-        sampling_locations = reference_points[:, :, None, :, None, :].repeat(1, 1, self.n_heads, 1, self.n_points, 1)
+        # sampling_locations = reference_points[:, :, None, :, None, :].repeat(1, 1, self.n_heads, 1, self.n_points, 1)
+
+        sampling_offsets = torch.tensor([ [1., 0],
+                                          [ 0, 1.],
+                                          [-1., 0],
+                                          [0, -1.]], dtype=torch.float32, device=value.device)
+        sampling_offsets = sampling_offsets.view(1, 1, 4, 2).repeat(self.n_heads, self.n_levels, 1, 1)
+
+        offset_normalizer = torch.stack([input_spatial_shapes[..., 1], input_spatial_shapes[..., 0]], -1)
+        sampling_locations = reference_points[:, :, None, :, None, :] \
+                                + sampling_offsets / offset_normalizer[None, None, None, :, None, :]
+
         output = MSDeformAttnFunction.apply(
-            value, input_spatial_shapes, input_level_start_index, sampling_locations, sampling_weights, self.im2col_step)
+            value, input_spatial_shapes, input_level_start_index, sampling_locations, attention_weights, self.im2col_step)
         output = self.output_proj(output)
         return output
 
