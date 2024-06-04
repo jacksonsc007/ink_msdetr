@@ -52,17 +52,6 @@ class MultiScaleSampler(nn.Module):
         self.n_heads = n_heads
         self.n_points = n_points
 
-        self.value_proj = nn.Linear(d_model, d_model)
-        self.output_proj = nn.Linear(d_model, d_model)
-
-        self._reset_parameters()
-
-    def _reset_parameters(self):
-        xavier_uniform_(self.value_proj.weight.data)
-        constant_(self.value_proj.bias.data, 0.)
-        xavier_uniform_(self.output_proj.weight.data)
-        constant_(self.output_proj.bias.data, 0.)
-
     def forward(self, input_flatten, reference_points, input_spatial_shapes, input_level_start_index, input_padding_mask=None):
         """
         :param query                       (N, Length_{query}, C)
@@ -78,7 +67,7 @@ class MultiScaleSampler(nn.Module):
         N, Len_in, _ = input_flatten.shape
         assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in
 
-        value = self.value_proj(input_flatten)
+        value = input_flatten
         if input_padding_mask is not None:
             value = value.masked_fill(input_padding_mask[..., None], float(0))
         value = value.view(N, Len_in, self.n_heads, self.d_model // self.n_heads)
@@ -89,7 +78,6 @@ class MultiScaleSampler(nn.Module):
         sampling_locations = reference_points[:, :, None, :, None, :].repeat(1, 1, self.n_heads, 1, self.n_points, 1)
         output = MSDeformAttnFunction.apply(
             value, input_spatial_shapes, input_level_start_index, sampling_locations, attention_weights, self.im2col_step)
-        output = self.output_proj(output)
         return output
 
 class MSDeformAttn(nn.Module):
