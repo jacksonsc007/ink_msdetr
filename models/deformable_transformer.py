@@ -65,6 +65,7 @@ class DeformableTransformer(nn.Module):
         # multiscale sampler
         self.multi_scale_sampler = MultiScaleSampler(d_model, num_feature_levels, 1, 1)
         self.dropout1 = nn.Dropout(dropout)
+        self.linear0 = nn.Linear(2 * d_model, d_model)
         self.norm1 = nn.LayerNorm(d_model)
 
         # ffn
@@ -216,7 +217,10 @@ class DeformableTransformer(nn.Module):
 
         # use multi-scale sampler
         sampled_feat = self.multi_scale_sampler(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
-        memory = memory + self.dropout1(sampled_feat)
+        memory = self.linear0( torch.cat([  memory, 
+                                            self.dropout1(sampled_feat)
+                                            ], dim=2
+                                        ))
         memory = self.norm1(memory)
         memory = self.forward_ffn(memory)
         # memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)

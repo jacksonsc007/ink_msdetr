@@ -11,3 +11,9 @@ Is FFN necessary? Get rid of it!
 Are linear projections within the MultiScaleSampler necessary?
 
 Get rid of all of them.
+
+
+
+# v3
+## v3.0
+Change residual add to concatenation.
