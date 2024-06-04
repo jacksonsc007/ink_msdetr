@@ -67,19 +67,6 @@ class DeformableTransformer(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
         self.norm1 = nn.LayerNorm(d_model)
 
-        # ffn
-        self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.activation = _get_activation_fn(activation)
-        self.dropout2 = nn.Dropout(dropout)
-        self.linear2 = nn.Linear(dim_feedforward, d_model)
-        self.dropout3 = nn.Dropout(dropout)
-        self.norm2 = nn.LayerNorm(d_model)
-
-    def forward_ffn(self, src):
-        src2 = self.linear2(self.dropout2(self.activation(self.linear1(src))))
-        src = src + self.dropout3(src2)
-        src = self.norm2(src)
-        return src
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -218,7 +205,6 @@ class DeformableTransformer(nn.Module):
         sampled_feat = self.multi_scale_sampler(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
         memory = memory + self.dropout1(sampled_feat)
         memory = self.norm1(memory)
-        memory = self.forward_ffn(memory)
         # memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
 
         # prepare input for 1st decoder stage

@@ -1,6 +1,5 @@
-# v1.0
-Test if multiscalesampler (v1.4 1head) works with hybrid cascade struture (v1.0)
+In this branch, we analyze each component of MultiScaleSampler.
 
-
-# 2.0
-Test if multiscalesampler (v1.4 1head) works with hybrid cascade struture (v1.2)
+# v1
+## v1.0
+Is FFN necessary? Get rid of it!
