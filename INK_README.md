@@ -17,6 +17,8 @@ Increase the number of multiscalesampler (v1.4 1head) to 2;
 ## 2.0.2
 Change the location of the second multiscalesampler
 
+## 2.0.3
+Increase the number of multiscalesampler (v1.4 1head) to 3;
 
 # todo
 

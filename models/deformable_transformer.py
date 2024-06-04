@@ -65,7 +65,9 @@ class DeformableTransformer(nn.Module):
 
         # multiscale sampler
         self.multi_scale_sampler1 = MultiScaleSampler(d_model, num_feature_levels, 1, 1, dim_feedforward, dropout, activation)
-        self.multi_scale_sampler2 = MultiScaleSampler(d_model, num_feature_levels, 1, 1, dim_feedforward, dropout, activation)
+        self.encoder.multi_scale_sampler = nn.ModuleList()
+        for _ in range(2):
+            self.encoder.multi_scale_sampler.append( copy.deepcopy(self.multi_scale_sampler1) )
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -200,11 +202,9 @@ class DeformableTransformer(nn.Module):
 
         # >>===================== Start 1st detection stage=====================
 
-        # use multi-scale sampler for backbone feature
+        # use multi-scale sampler
         memory = self.multi_scale_sampler1(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
-        memory = self.multi_scale_sampler2(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
-
-        memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
+        # memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
 
         # prepare input for 1st decoder stage
         bs, _, c = memory.shape
@@ -253,7 +253,7 @@ class DeformableTransformer(nn.Module):
 
         # >>===================== Start following detection stage=====================
         # remaining encoder
-        enc_start_layer_idx = 1
+        enc_start_layer_idx = 0
         dec_start_layer_idx = 1
         memory = self.encoder(enc_start_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
 
@@ -342,6 +342,8 @@ class DeformableTransformerEncoder(nn.Module):
         output = src
         for layer_idx in range(start_layer_idx, self.num_layers):
             layer = self.layers[layer_idx]
+            if layer_idx < 2:
+                output = self.multi_scale_sampler[layer_idx](output, reference_points, spatial_shapes, level_start_index, padding_mask)
             output = layer(output, pos, reference_points, spatial_shapes, level_start_index, padding_mask)
 
         return output
