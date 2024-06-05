@@ -157,7 +157,7 @@ class DeformableTransformer(nn.Module):
 
          
 
-    def forward(self, srcs, masks, pos_embeds, query_embed=None, **kwargs):
+    def forward(self, srcs, masks, pos_embeds, query_embed=None, query_embed2=None, **kwargs):
         assert self.two_stage or query_embed is not None
 
         # prepare input for encoder
@@ -245,7 +245,7 @@ class DeformableTransformer(nn.Module):
         memory = self.encoder(enc_start_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
 
         # remaining decoder
-        dec_query_o2o = dec_query_o2o.detach() # explictly detach gradient
+        dec_query_o2o = query_embed2.unsqueeze(0).expand(bs, -1, -1)
         hs_o2o_, hs_o2m_, inter_references_ = self.decoder(dec_start_layer_idx, dec_query_o2o, dec_ref, memory,
                                             spatial_shapes, level_start_index, valid_ratios, dec_query_pos, mask_flatten, **kwargs)
         # >>===================== End following detection stage=====================
