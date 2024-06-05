@@ -245,6 +245,7 @@ class DeformableTransformer(nn.Module):
         memory = self.encoder(enc_start_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
 
         # remaining decoder
+        dec_query_o2o = dec_query_o2o.detach() # explictly detach gradient
         hs_o2o_, hs_o2m_, inter_references_ = self.decoder(dec_start_layer_idx, dec_query_o2o, dec_ref, memory,
                                             spatial_shapes, level_start_index, valid_ratios, dec_query_pos, mask_flatten, **kwargs)
         # >>===================== End following detection stage=====================
