@@ -6,7 +6,7 @@ num_dec_layers=6
 dataset=minicoco
 batch_size=16
 device_code=3060x8_1
-branch=tmp_merge_3-v3.0.1
+branch=tmp_merge_3-v3.0.2
 backbone=resnet18
 num_queries=100
 

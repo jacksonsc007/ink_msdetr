@@ -61,7 +61,7 @@ class DeformableTransformer(nn.Module):
 
         self.num_detection_stages = len( self.encoder.layers )
         assert self.num_detection_stages == len( self.decoder.layers )
-        self.multi_scale_sampler1 = MultiScaleSampler(
+        self.multi_scale_sampler = MultiScaleSampler(
             d_model,
             num_feature_levels,
             1,
@@ -70,15 +70,8 @@ class DeformableTransformer(nn.Module):
             dropout,
             activation
         )
-        self.multi_scale_sampler2 = MultiScaleSampler(
-            d_model,
-            num_feature_levels,
-            1,
-            1,
-            dim_feedforward,
-            dropout,
-            activation
-        )
+        
+        self.multi_scale_sampler = _get_clones(self.multi_scale_sampler, 3)
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -213,9 +206,7 @@ class DeformableTransformer(nn.Module):
 
         # >>===================== Start 1st detection stage=====================
         # use multi scale sampler
-
-
-        memory = self.multi_scale_sampler1(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
+        memory = self.multi_scale_sampler[0](memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
 
         memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
         # prepare input for 1st decoder stage
@@ -264,8 +255,7 @@ class DeformableTransformer(nn.Module):
         
         # >>===================== Start following detection stage=====================
         for idx, (start_layer_idx, end_layer_idx) in enumerate( [(1, 2), (3, 5)]):
-            if idx == 0:
-                memory = self.multi_scale_sampler2(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
+            memory = self.multi_scale_sampler[idx + 1](memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
             # remaining encoder
             memory = self.encoder(start_layer_idx, end_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
 
