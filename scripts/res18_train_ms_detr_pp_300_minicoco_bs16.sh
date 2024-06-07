@@ -1,8 +1,8 @@
 set -e
 coco_path=data/coco
 num_gpus=8
-num_enc_layers=5
-num_dec_layers=6
+num_enc_layers=6
+num_dec_layers=7
 dataset=minicoco
 batch_size=16
 device_code=3060x8_1

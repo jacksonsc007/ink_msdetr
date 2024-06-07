@@ -59,8 +59,7 @@ class DeformableTransformer(nn.Module):
 
         self._reset_parameters()
 
-        self.num_detection_stages = len( self.decoder.layers )
-
+        assert num_encoder_layers + 1 == num_decoder_layers
     def _reset_parameters(self):
         for p in self.parameters():
             if p.dim() > 1:
@@ -157,7 +156,7 @@ class DeformableTransformer(nn.Module):
 
          
 
-    def forward(self, srcs, masks, pos_embeds, query_embed=None, query_embed2=None, **kwargs):
+    def forward(self, srcs, masks, pos_embeds, query_embed=None, **kwargs):
         assert self.two_stage or query_embed is not None
 
         # prepare input for encoder
@@ -193,7 +192,7 @@ class DeformableTransformer(nn.Module):
         enc_reference_points = self.encoder.get_reference_points(spatial_shapes, valid_ratios, device=src_flatten.device)
 
         # >>===================== Start 1st detection stage=====================
-        # memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
+        memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
         # prepare input for 1st decoder stage
         bs, _, c = memory.shape
         if self.two_stage:
@@ -240,13 +239,11 @@ class DeformableTransformer(nn.Module):
         
         # >>===================== Start following detection stage=====================
         # remaining encoder
-        enc_start_layer_idx = 0
-        dec_start_layer_idx = 1
-        memory = self.encoder(enc_start_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
+        start_layer_idx = 1
+        memory = self.encoder(start_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
 
         # remaining decoder
-        dec_query_o2o = query_embed2.unsqueeze(0).expand(bs, -1, -1)
-        hs_o2o_, hs_o2m_, inter_references_ = self.decoder(dec_start_layer_idx, dec_query_o2o, dec_ref, memory,
+        hs_o2o_, hs_o2m_, inter_references_ = self.decoder(start_layer_idx, init_dec_tgt, init_dec_reference_points, memory,
                                             spatial_shapes, level_start_index, valid_ratios, dec_query_pos, mask_flatten, **kwargs)
         # >>===================== End following detection stage=====================
         hs_o2o = hs_o2o + hs_o2o_
