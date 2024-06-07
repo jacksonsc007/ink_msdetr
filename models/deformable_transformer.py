@@ -59,7 +59,6 @@ class DeformableTransformer(nn.Module):
 
         self._reset_parameters()
 
-        assert num_encoder_layers + 1 == num_decoder_layers
     def _reset_parameters(self):
         for p in self.parameters():
             if p.dim() > 1:
@@ -127,34 +126,6 @@ class DeformableTransformer(nn.Module):
         valid_ratio_w = valid_W.float() / W
         valid_ratio = torch.stack([valid_ratio_w, valid_ratio_h], -1)
         return valid_ratio
-    def cascade_stage(
-        self,
-        stage_idx,
-        # encoder part
-        enc_src, 
-        enc_reference_points, 
-        enc_pos, 
-        enc_padding_mask,
-        # decoder part
-        dec_tgt, 
-        dec_reference_points, 
-        dec_query_pos, 
-        # common part
-        spatial_shapes, 
-        level_start_index, 
-        valid_ratios,
-        **kwargs
-        ):
-        memory = self.encoder.cascade_stage_forward(stage_idx, enc_src, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
-
-        # decoder
-        dec_hs_o2o, dec_hs_o2m, dec_ref, dec_new_ref= \
-            self.decoder.cascade_stage_forward(stage_idx, dec_tgt, dec_reference_points, memory,
-                spatial_shapes, level_start_index, valid_ratios, dec_query_pos, enc_padding_mask, **kwargs)
-        
-        return memory, dec_hs_o2o, dec_hs_o2m, dec_ref, dec_new_ref
-
-         
 
     def forward(self, srcs, masks, pos_embeds, query_embed=None, **kwargs):
         assert self.two_stage or query_embed is not None
@@ -182,21 +153,14 @@ class DeformableTransformer(nn.Module):
         level_start_index = torch.cat((spatial_shapes.new_zeros((1, )), spatial_shapes.prod(1).cumsum(0)[:-1]))
         valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks], 1)
 
-        # ===================== Start cascade detection stage =====================
-        hs_o2o = []
-        hs_o2m = [] 
-        inter_references = []
-        memory = src_flatten
-        enc_pos = lvl_pos_embed_flatten
-        enc_padding_mask = mask_flatten
-        enc_reference_points = self.encoder.get_reference_points(spatial_shapes, valid_ratios, device=src_flatten.device)
+        # encoder
+        memory_last, memory_first = self.encoder(src_flatten, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
 
-        # >>===================== Start 1st detection stage=====================
-        memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
-        # prepare input for 1st decoder stage
+        # prepare input for decoder
+        memory = memory_first
         bs, _, c = memory.shape
         if self.two_stage:
-            output_memory, output_proposals = self.gen_encoder_output_proposals(memory, enc_padding_mask, spatial_shapes)
+            output_memory, output_proposals = self.gen_encoder_output_proposals(memory, mask_flatten, spatial_shapes)
 
             # hack implementation for two-stage Deformable DETR
             enc_outputs_class = self.decoder.class_embed[self.decoder.num_layers](output_memory)
@@ -224,37 +188,20 @@ class DeformableTransformer(nn.Module):
             tgt = tgt.unsqueeze(0).expand(bs, -1, -1)
             reference_points = self.reference_points(query_embed).sigmoid()
             init_reference_out = reference_points
-        init_dec_tgt = tgt
-        dec_query_pos = query_embed
-        init_dec_reference_points = reference_points
+
         # decoder
-        dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref= \
-            self.decoder.cascade_stage_forward(0, init_dec_tgt, init_dec_reference_points, memory,
-                spatial_shapes, level_start_index, valid_ratios, dec_query_pos, enc_padding_mask, **kwargs)
+        memory = memory_first
+        hs_o2o_, hs_o2m_, inter_references_ = self.decoder(0, 1, tgt, reference_points, memory,
+                                            spatial_shapes, level_start_index, valid_ratios, query_embed, mask_flatten, **kwargs)
 
-        hs_o2o.append(dec_query_o2o)
-        hs_o2m.append(dec_query_o2m)
-        inter_references.append(dec_new_ref if self.decoder.look_forward_twice else dec_ref)
-        # >>===================== End 1st detection stage=====================
-        
-        # >>===================== Start following detection stage=====================
-        # remaining encoder
-        start_layer_idx = 1
-        memory = self.encoder(start_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
+        memory = memory_last
+        hs_o2o, hs_o2m, inter_references = self.decoder(1, 7, tgt, reference_points, memory,
+                                            spatial_shapes, level_start_index, valid_ratios, query_embed, mask_flatten, **kwargs)
+        hs_o2o = torch.cat([hs_o2o_, hs_o2o], dim=0)
+        hs_o2m = torch.cat([hs_o2m_, hs_o2m], dim=0)
+        inter_references = torch.cat([inter_references_, inter_references], dim=0)
 
-        # remaining decoder
-        hs_o2o_, hs_o2m_, inter_references_ = self.decoder(start_layer_idx, init_dec_tgt, init_dec_reference_points, memory,
-                                            spatial_shapes, level_start_index, valid_ratios, dec_query_pos, mask_flatten, **kwargs)
-        # >>===================== End following detection stage=====================
-        hs_o2o = hs_o2o + hs_o2o_
-        hs_o2m = hs_o2m + hs_o2m_
-        inter_references = inter_references + inter_references_
-
-        inter_references = torch.stack(inter_references)
-        hs_o2m = torch.stack(hs_o2m)
-        hs_o2o = torch.stack(hs_o2o)
         inter_references_out = inter_references
-        # ===================== End cascade detection stage =====================
         if self.two_stage:
             return hs_o2o, hs_o2m, init_reference_out, inter_references_out, enc_outputs_class, enc_outputs_coord_unact, output_proposals.sigmoid(),
         return hs_o2o, hs_o2m, init_reference_out, inter_references_out, None, None, output_proposals.sigmoid(),
@@ -323,18 +270,15 @@ class DeformableTransformerEncoder(nn.Module):
         reference_points = reference_points[:, :, None] * valid_ratios[:, None]
         return reference_points
 
-    def forward(self, start_layer_idx, reference_points, src, spatial_shapes, level_start_index, valid_ratios, pos=None, padding_mask=None):
+    def forward(self, src, spatial_shapes, level_start_index, valid_ratios, pos=None, padding_mask=None):
         output = src
-        for layer_idx in range(start_layer_idx, self.num_layers):
-            layer = self.layers[layer_idx]
+        reference_points = self.get_reference_points(spatial_shapes, valid_ratios, device=src.device)
+        for idx, layer in enumerate(self.layers):
             output = layer(output, pos, reference_points, spatial_shapes, level_start_index, padding_mask)
+            if idx == 0:
+                memory_first = output
 
-        return output
-    def cascade_stage_forward(self, stage_idx, src, spatial_shapes, level_start_index, reference_points, pos, padding_mask):
-        layer = self.layers[stage_idx]
-        output = layer(src, pos, reference_points, spatial_shapes, level_start_index, padding_mask)
-        return output
-
+        return output, memory_first
 
 
 class DeformableTransformerDecoderLayer(nn.Module):
@@ -442,14 +386,14 @@ class DeformableTransformerDecoder(nn.Module):
         self.look_forward_twice = look_forward_twice
         self.use_ms_detr = use_ms_detr
 
-    def forward(self, start_layer_idx, tgt, reference_points, src, src_spatial_shapes, src_level_start_index, src_valid_ratios,
+    def forward(self, start_idx, end_idx, tgt, reference_points, src, src_spatial_shapes, src_level_start_index, src_valid_ratios,
                 query_pos=None, src_padding_mask=None, **kwargs):
         output = tgt
 
         intermediate = []
         intermediate_o2m = []
         intermediate_reference_points = []
-        for lid in range(start_layer_idx, self.num_layers):
+        for lid in range(start_idx, end_idx):
             layer = self.layers[lid]
             if reference_points.shape[-1] == 4:
                 reference_points_input = reference_points[:, :, None] \
@@ -480,42 +424,11 @@ class DeformableTransformerDecoder(nn.Module):
                     if self.look_forward_twice
                     else reference_points
                 )
-        assert self.return_intermediate
+
         if self.return_intermediate:
-            return intermediate, intermediate_o2m, intermediate_reference_points
+            return torch.stack(intermediate), torch.stack(intermediate_o2m), torch.stack(intermediate_reference_points)
 
         return output, output_o2m, reference_points
-
-    def cascade_stage_forward(
-        self, stage_idx, tgt, reference_points, src, src_spatial_shapes, src_level_start_index, src_valid_ratios, query_pos, src_padding_mask, **kwargs
-    ):
-        layer = self.layers[stage_idx]
-        if reference_points.shape[-1] == 4:
-            reference_points_input = reference_points[:, :, None] \
-                                        * torch.cat([src_valid_ratios, src_valid_ratios], -1)[:, None]
-        else:
-            assert reference_points.shape[-1] == 2
-            reference_points_input = reference_points[:, :, None] * src_valid_ratios[:, None]
-        output, output_o2m = layer(tgt, query_pos, reference_points_input, src, src_spatial_shapes, src_level_start_index, src_padding_mask, **kwargs)
-
-        # hack implementation for iterative bounding box refinement
-        if self.bbox_embed is not None:
-            tmp = self.bbox_embed[stage_idx](output)
-            if reference_points.shape[-1] == 4:
-                new_reference_points = tmp + inverse_sigmoid(reference_points)
-                new_reference_points = new_reference_points.sigmoid()
-            else:
-                assert reference_points.shape[-1] == 2
-                new_reference_points = tmp
-                new_reference_points[..., :2] = tmp[..., :2] + inverse_sigmoid(reference_points)
-                new_reference_points = new_reference_points.sigmoid()
-            reference_points = new_reference_points.detach()
-
-        assert self.return_intermediate, "cascade detection requires return_intermediate."
-        if self.look_forward_twice:
-            return output, output_o2m, reference_points, new_reference_points
-        else:
-            return output, output_o2m, reference_points, None
 
 
 def _get_clones(module, N):
