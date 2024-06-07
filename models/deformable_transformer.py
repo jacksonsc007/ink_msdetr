@@ -190,7 +190,7 @@ class DeformableTransformer(nn.Module):
             init_reference_out = reference_points
 
         # decoder
-        memory = memory_first
+        memory = memory_first.detach()
         hs_o2o_, hs_o2m_, inter_references_ = self.decoder(0, 1, tgt, reference_points, memory,
                                             spatial_shapes, level_start_index, valid_ratios, query_embed, mask_flatten, **kwargs)
 
