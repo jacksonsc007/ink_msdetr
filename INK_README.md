@@ -25,3 +25,6 @@ Another implementation as comparison with v2.0
 
 ## v2.0.2
 detach gradient of the output of the 1st encoder.
+
+## v2.0.3
+detach gradient of query for the extra decoder. It results in gradient of all inputs to the extra decoder are detached.
