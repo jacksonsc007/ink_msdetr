@@ -171,7 +171,7 @@ class DeformableDETR(nn.Module):
         outputs_classes = []
         outputs_coords = []
         for lvl in range(hs.shape[0]):
-            if lvl <= 1:
+            if lvl == 0:
                 reference = init_reference
             else:
                 reference = inter_references[lvl - 1]
@@ -197,7 +197,7 @@ class DeformableDETR(nn.Module):
             outputs_classes_o2m = []
             outputs_coords_o2m = []
             for lvl in range(hs_o2m.shape[0]):
-                if lvl <= 1:
+                if lvl == 0:
                     reference = init_reference
                 else:
                     reference = inter_references[lvl - 1]

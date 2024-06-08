@@ -190,16 +190,9 @@ class DeformableTransformer(nn.Module):
             init_reference_out = reference_points
 
         # decoder
-        memory = memory_first.detach()
-        hs_o2o_, hs_o2m_, inter_references_ = self.decoder(0, 1, tgt.detach(), reference_points, memory,
-                                            spatial_shapes, level_start_index, valid_ratios, query_embed.detach(), mask_flatten, **kwargs)
-
         memory = memory_last
-        hs_o2o, hs_o2m, inter_references = self.decoder(1, 7, tgt, reference_points, memory,
+        hs_o2o, hs_o2m, inter_references = self.decoder(tgt, reference_points, memory,
                                             spatial_shapes, level_start_index, valid_ratios, query_embed, mask_flatten, **kwargs)
-        hs_o2o = torch.cat([hs_o2o_, hs_o2o], dim=0)
-        hs_o2m = torch.cat([hs_o2m_, hs_o2m], dim=0)
-        inter_references = torch.cat([inter_references_, inter_references], dim=0)
 
         inter_references_out = inter_references
         if self.two_stage:
@@ -273,12 +266,12 @@ class DeformableTransformerEncoder(nn.Module):
     def forward(self, src, spatial_shapes, level_start_index, valid_ratios, pos=None, padding_mask=None):
         output = src
         reference_points = self.get_reference_points(spatial_shapes, valid_ratios, device=src.device)
-        for idx, layer in enumerate(self.layers):
+        for lid, layer in enumerate(self.layers):
             output = layer(output, pos, reference_points, spatial_shapes, level_start_index, padding_mask)
-            if idx == 0:
-                memory_first = output
+            if lid == 0:
+                output_first = output
 
-        return output, memory_first
+        return output, output_first
 
 
 class DeformableTransformerDecoderLayer(nn.Module):
@@ -386,15 +379,14 @@ class DeformableTransformerDecoder(nn.Module):
         self.look_forward_twice = look_forward_twice
         self.use_ms_detr = use_ms_detr
 
-    def forward(self, start_idx, end_idx, tgt, reference_points, src, src_spatial_shapes, src_level_start_index, src_valid_ratios,
+    def forward(self, tgt, reference_points, src, src_spatial_shapes, src_level_start_index, src_valid_ratios,
                 query_pos=None, src_padding_mask=None, **kwargs):
         output = tgt
 
         intermediate = []
         intermediate_o2m = []
         intermediate_reference_points = []
-        for lid in range(start_idx, end_idx):
-            layer = self.layers[lid]
+        for lid, layer in enumerate(self.layers):
             if reference_points.shape[-1] == 4:
                 reference_points_input = reference_points[:, :, None] \
                                          * torch.cat([src_valid_ratios, src_valid_ratios], -1)[:, None]
