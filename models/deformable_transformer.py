@@ -174,11 +174,13 @@ class DeformableTransformer(nn.Module):
             init_reference_out = reference_points
             pos_trans_out = self.pos_trans_norm(self.pos_trans(self.get_proposal_pos_embed(topk_coords_unact)))
 
+            assert self.mixed_selection
             if not self.mixed_selection:
                 query_embed, tgt = torch.split(pos_trans_out, c, dim=2)
             else:
                 # tgt: content embedding, query_embed here is the learnable content embedding
-                tgt = query_embed.unsqueeze(0).expand(bs, -1, -1)
+                query_embed = query_embed.unsqueeze(0).expand(bs, -1, -1)
+                tgt, extra_tgt = torch.split(query_embed, c, dim=2)
                 # query_embed: position embedding, transformed from the topk proposals
                 query_embed, _ = torch.split(pos_trans_out, c, dim=2)
 
@@ -190,9 +192,9 @@ class DeformableTransformer(nn.Module):
             init_reference_out = reference_points
 
         # decoder
-        memory = memory_first.detach()
-        hs_o2o_, hs_o2m_, inter_references_ = self.decoder(0, 1, tgt.detach(), reference_points, memory,
-                                            spatial_shapes, level_start_index, valid_ratios, query_embed.detach(), mask_flatten, **kwargs)
+        memory = memory_first
+        hs_o2o_, hs_o2m_, inter_references_ = self.decoder(0, 1, extra_tgt, reference_points, memory,
+                                            spatial_shapes, level_start_index, valid_ratios, query_embed, mask_flatten, **kwargs)
 
         memory = memory_last
         hs_o2o, hs_o2m, inter_references = self.decoder(1, 7, tgt, reference_points, memory,
