@@ -33,3 +33,6 @@ detach gradient of query for the extra decoder. It results in gradient of all in
 
 # v2.2
 Extra decoder has its own queries embedding.
+
+# v2.3
+Extra decoder has its own queries positional embedding.

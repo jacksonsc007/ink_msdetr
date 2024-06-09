@@ -62,11 +62,11 @@ class DeformableDETR(nn.Module):
         self.mixed_selection = mixed_selection
         self.use_ms_detr = use_ms_detr
 
-        assert mixed_selection
         if not two_stage:
             self.query_embed = nn.Embedding(num_queries, hidden_dim*2)
         elif mixed_selection:
-            self.query_embed = nn.Embedding(num_queries, hidden_dim*2)
+            self.query_embed = nn.Embedding(num_queries, hidden_dim)
+        self.extra_query_embed = nn.Embedding(num_queries, hidden_dim)
         
         if num_feature_levels > 1:
             num_backbone_outs = len(backbone.strides)
@@ -166,13 +166,16 @@ class DeformableDETR(nn.Module):
         query_embeds = None
         if not self.two_stage or self.mixed_selection:
             query_embeds = self.query_embed.weight
+            extra_query_embeds = self.extra_query_embed.weight
 
-        hs, hs_o2m, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, anchors = self.transformer(srcs, masks, pos, query_embeds)
+        hs, hs_o2m, init_reference, extra_init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, anchors = self.transformer(srcs, masks, pos, query_embeds, extra_query_embeds)
 
         outputs_classes = []
         outputs_coords = []
         for lvl in range(hs.shape[0]):
-            if lvl <= 1:
+            if lvl == 0:
+                reference = extra_init_reference
+            elif lvl == 1:
                 reference = init_reference
             else:
                 reference = inter_references[lvl - 1]

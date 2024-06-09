@@ -56,6 +56,7 @@ class DeformableTransformer(nn.Module):
             self.pos_trans_norm = nn.LayerNorm(d_model * 2)
         else:
             self.reference_points = nn.Linear(d_model, 2)
+        self.extra_reference_points = nn.Linear(d_model, 2)
 
         self._reset_parameters()
 
@@ -127,7 +128,7 @@ class DeformableTransformer(nn.Module):
         valid_ratio = torch.stack([valid_ratio_w, valid_ratio_h], -1)
         return valid_ratio
 
-    def forward(self, srcs, masks, pos_embeds, query_embed=None, **kwargs):
+    def forward(self, srcs, masks, pos_embeds, query_embed=None, extra_query_embed=None, **kwargs):
         assert self.two_stage or query_embed is not None
 
         # prepare input for encoder
@@ -157,7 +158,7 @@ class DeformableTransformer(nn.Module):
         memory_last, memory_first = self.encoder(src_flatten, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
 
         # prepare input for decoder
-        memory = memory_first
+        memory = memory_last
         bs, _, c = memory.shape
         if self.two_stage:
             output_memory, output_proposals = self.gen_encoder_output_proposals(memory, mask_flatten, spatial_shapes)
@@ -174,13 +175,11 @@ class DeformableTransformer(nn.Module):
             init_reference_out = reference_points
             pos_trans_out = self.pos_trans_norm(self.pos_trans(self.get_proposal_pos_embed(topk_coords_unact)))
 
-            assert self.mixed_selection
             if not self.mixed_selection:
                 query_embed, tgt = torch.split(pos_trans_out, c, dim=2)
             else:
                 # tgt: content embedding, query_embed here is the learnable content embedding
-                query_embed = query_embed.unsqueeze(0).expand(bs, -1, -1)
-                tgt, extra_tgt = torch.split(query_embed, c, dim=2)
+                tgt = query_embed.unsqueeze(0).expand(bs, -1, -1)
                 # query_embed: position embedding, transformed from the topk proposals
                 query_embed, _ = torch.split(pos_trans_out, c, dim=2)
 
@@ -193,8 +192,11 @@ class DeformableTransformer(nn.Module):
 
         # decoder
         memory = memory_first
-        hs_o2o_, hs_o2m_, inter_references_ = self.decoder(0, 1, extra_tgt, reference_points, memory,
-                                            spatial_shapes, level_start_index, valid_ratios, query_embed, mask_flatten, **kwargs)
+        extra_postional_embed = extra_query_embed.unsqueeze(0).expand(bs, -1, -1)
+        extra_reference_points = self.extra_reference_points(extra_postional_embed).sigmoid()
+        extra_init_reference_out = extra_reference_points
+        hs_o2o_, hs_o2m_, inter_references_ = self.decoder(0, 1, tgt, extra_reference_points, memory,
+                                            spatial_shapes, level_start_index, valid_ratios, extra_postional_embed, mask_flatten, **kwargs)
 
         memory = memory_last
         hs_o2o, hs_o2m, inter_references = self.decoder(1, 7, tgt, reference_points, memory,
@@ -205,7 +207,7 @@ class DeformableTransformer(nn.Module):
 
         inter_references_out = inter_references
         if self.two_stage:
-            return hs_o2o, hs_o2m, init_reference_out, inter_references_out, enc_outputs_class, enc_outputs_coord_unact, output_proposals.sigmoid(),
+            return hs_o2o, hs_o2m, init_reference_out, extra_init_reference_out, inter_references_out, enc_outputs_class, enc_outputs_coord_unact, output_proposals.sigmoid(),
         return hs_o2o, hs_o2m, init_reference_out, inter_references_out, None, None, output_proposals.sigmoid(),
 
 
