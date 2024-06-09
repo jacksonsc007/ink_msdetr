@@ -199,7 +199,7 @@ class DeformableTransformer(nn.Module):
                                             spatial_shapes, level_start_index, valid_ratios, extra_postional_embed, mask_flatten, **kwargs)
 
         memory = memory_last
-        hs_o2o, hs_o2m, inter_references = self.decoder(1, 7, tgt, reference_points, memory,
+        hs_o2o, hs_o2m, inter_references = self.decoder(0, 6, tgt, reference_points, memory,
                                             spatial_shapes, level_start_index, valid_ratios, query_embed, mask_flatten, **kwargs)
         hs_o2o = torch.cat([hs_o2o_, hs_o2o], dim=0)
         hs_o2m = torch.cat([hs_o2m_, hs_o2m], dim=0)
