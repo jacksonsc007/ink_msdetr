@@ -2,12 +2,12 @@ set -e
 coco_path=data/coco
 num_gpus=8
 num_enc_layers=6
-num_dec_layers=6
+num_dec_layers=7
 dataset=minicoco
 batch_size=16
 device_code=3060x8_2
 backbone=resnet18
-branch=sparse_token_v2.1
+branch=sparse_token_v2.1_topk0.3
 num_queries=100
 
 exp_code=${branch}-shortersize480-${device_code}_${dataset}-cascade-msdetr_${backbone}_enc${num_enc_layers}_dec${num_dec_layers}_query${num_queries}-bs${batch_size}
