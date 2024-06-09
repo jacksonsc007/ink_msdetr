@@ -36,3 +36,7 @@ Use two MultiScaleSamplers.
 
 ## v3.0.2
 Use three MultiScaleSamplers.
+
+
+# v4.0
+Test if multiscalesampler (v1.4 1head) works with hybrid cascade struture (v2.3)
