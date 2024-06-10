@@ -39,3 +39,5 @@ Extra decoder has its own queries positional embedding.
 
 # v2.4
 Based on v2.3, extra decoder share parameters with the 1st decoder.
+
+# v2.5

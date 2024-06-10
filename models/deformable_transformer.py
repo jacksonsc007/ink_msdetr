@@ -59,6 +59,8 @@ class DeformableTransformer(nn.Module):
         self.extra_reference_points = nn.Linear(d_model, 2)
 
         self._reset_parameters()
+        assert num_encoder_layers == 6
+        assert num_decoder_layers == 6
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -199,7 +201,9 @@ class DeformableTransformer(nn.Module):
                                             spatial_shapes, level_start_index, valid_ratios, extra_postional_embed, mask_flatten, **kwargs)
 
         memory = memory_last
-        hs_o2o, hs_o2m, inter_references = self.decoder(0, 6, tgt, reference_points, memory,
+        tgt = hs_o2o_[0]
+        assert self.mixed_selection and self.two_stage
+        hs_o2o, hs_o2m, inter_references = self.decoder(1, 6, tgt, reference_points, memory,
                                             spatial_shapes, level_start_index, valid_ratios, query_embed, mask_flatten, **kwargs)
         hs_o2o = torch.cat([hs_o2o_, hs_o2o], dim=0)
         hs_o2m = torch.cat([hs_o2m_, hs_o2m], dim=0)
