@@ -14,3 +14,6 @@ Sparse token scheme based on <hybrid_cascade-v2.3>
 
 ## v2.2
 Sparse token scheme based on <hybrid_cascade-v2.5>
+
+## v2.3
+Sparse token scheme based on <hybrid_cascade-v2.6>

@@ -165,10 +165,9 @@ class DeformableTransformer(nn.Module):
         enc_reference_points = self.encoder.get_reference_points(spatial_shapes, valid_ratios, device=src_flatten.device)
 
         """
-        backbone feature -> 1st encoder layer -> 1st decoder layer
+        backbone feature -> 1st decoder layer
         """
-        memory = self.encoder.cascade_stage_forward(0, memory, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
-
+        # memory = self.encoder.cascade_stage_forward(0, memory, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
         extra_postional_embed = extra_query_embed.unsqueeze(0).expand(bs, -1, -1)
         extra_reference_points = self.extra_reference_points(extra_postional_embed).sigmoid()
         extra_init_reference_out = extra_reference_points
@@ -200,9 +199,9 @@ class DeformableTransformer(nn.Module):
 
 
         """
-        remaining encoder layers ->  two-stage proposal generation -> remaining decoder layers
+        all encoder layers ->  two-stage proposal generation -> remaining decoder layers
         """
-        memory = self.encoder(1, 6, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, 
+        memory = self.encoder(0, 6, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, 
                               lvl_pos_embed_flatten, mask_flatten, topk_enc_token_indice, valid_enc_token_num)
         # prepare input for 1st decoder stage
         bs, _, c = memory.shape
