@@ -47,3 +47,7 @@ Another implementation of v2.5
 
 
 # v2.6
+
+
+# v2.7
+Apply two-stage scheme on both first and last encoder layers.

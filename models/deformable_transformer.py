@@ -56,7 +56,6 @@ class DeformableTransformer(nn.Module):
             self.pos_trans_norm = nn.LayerNorm(d_model * 2)
         else:
             self.reference_points = nn.Linear(d_model, 2)
-        self.extra_reference_points = nn.Linear(d_model, 2)
 
         self._reset_parameters()
 
@@ -187,6 +186,9 @@ class DeformableTransformer(nn.Module):
         hs_o2o = []
         hs_o2m = [] 
         inter_references = []
+        enc_output_cls = []
+        enc_output_box = []
+        enc_output_proposal = []
         memory = src_flatten
         enc_pos = lvl_pos_embed_flatten
         enc_padding_mask = mask_flatten
@@ -196,10 +198,33 @@ class DeformableTransformer(nn.Module):
         backbone feature -> 1st encoder layer -> 1st decoder layer
         """
         memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
+        
+        """
+        Generate two-stage proposals from 1st encoder layer
+        parameters for proposal generation are shared.
+        """
+        if self.two_stage:
+            output_memory, output_proposals = self.gen_encoder_output_proposals(memory, enc_padding_mask, spatial_shapes)
+
+            # hack implementation for two-stage Deformable DETR
+            enc_outputs_class = self.decoder.class_embed[self.decoder.num_layers](output_memory)
+            enc_outputs_coord_unact = self.decoder.bbox_embed[self.decoder.num_layers](output_memory) + output_proposals
+
+            topk = self.two_stage_num_proposals
+            topk_proposals = torch.topk(enc_outputs_class[..., 0], topk, dim=1)[1]
+            topk_coords_unact = torch.gather(enc_outputs_coord_unact, 1, topk_proposals.unsqueeze(-1).repeat(1, 1, 4))
+            topk_coords_unact = topk_coords_unact.detach()
+            reference_points = topk_coords_unact.sigmoid()
+            # init_reference_out = reference_points
+            pos_trans_out = self.pos_trans_norm(self.pos_trans(self.get_proposal_pos_embed(topk_coords_unact)))
+
+            enc_output_cls.append(enc_outputs_class)
+            enc_output_box.append(enc_outputs_coord_unact)
+            enc_output_proposal.append(output_proposals.sigmoid())
 
         extra_tgt = query_embed.unsqueeze(0).expand(bs, -1, -1)
-        extra_query_pos = extra_query_embed.unsqueeze(0).expand(bs, -1, -1)
-        extra_init_dec_reference_points = self.extra_reference_points(extra_query_pos).sigmoid()
+        extra_query_pos, _= torch.split(pos_trans_out, c, dim=2)
+        extra_init_dec_reference_points = reference_points
         dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref= \
             self.decoder.cascade_stage_forward(0, extra_tgt, extra_init_dec_reference_points, memory,
                 spatial_shapes, level_start_index, valid_ratios, extra_query_pos, enc_padding_mask, **kwargs)
@@ -242,6 +267,10 @@ class DeformableTransformer(nn.Module):
                 tgt = query_embed.unsqueeze(0).expand(bs, -1, -1)
                 # query_embed: position embedding, transformed from the topk proposals
                 query_embed, _ = torch.split(pos_trans_out, c, dim=2)
+
+            enc_output_cls.append(enc_outputs_class)
+            enc_output_box.append(enc_outputs_coord_unact)
+            enc_output_proposal.append(output_proposals.sigmoid())
         else:
             query_embed, tgt = torch.split(query_embed, c, dim=1)
             query_embed = query_embed.unsqueeze(0).expand(bs, -1, -1)
@@ -263,10 +292,14 @@ class DeformableTransformer(nn.Module):
         inter_references = torch.stack(inter_references)
         hs_o2m = torch.stack(hs_o2m)
         hs_o2o = torch.stack(hs_o2o)
+        enc_output_cls = torch.stack(enc_output_cls)
+        enc_output_box = torch.stack(enc_output_box)
+        enc_output_proposal = torch.stack(enc_output_proposal)
+
         inter_references_out = inter_references
         # ===================== End cascade detection stage =====================
         if self.two_stage:
-            return hs_o2o, hs_o2m, init_reference_out, extra_init_dec_reference_points, inter_references_out, enc_outputs_class, enc_outputs_coord_unact, output_proposals.sigmoid(),
+            return hs_o2o, hs_o2m, init_reference_out, extra_init_dec_reference_points, inter_references_out, enc_output_cls, enc_output_box, enc_output_proposal,
         return hs_o2o, hs_o2m, init_reference_out, inter_references_out, None, None, output_proposals.sigmoid(),
 
 
