@@ -61,7 +61,8 @@ class DeformableTransformer(nn.Module):
         self._reset_parameters()
 
         self.num_detection_stages = len( self.encoder.layers )
-        assert num_encoder_layers + 1 == num_decoder_layers
+        assert num_encoder_layers == 6
+        assert num_decoder_layers == 6
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -205,6 +206,7 @@ class DeformableTransformer(nn.Module):
                               lvl_pos_embed_flatten, mask_flatten, topk_enc_token_indice, valid_enc_token_num)
         # prepare input for 1st decoder stage
         bs, _, c = memory.shape
+        assert self.two_stage and self.mixed_selection
         if self.two_stage:
             output_memory, output_proposals = self.gen_encoder_output_proposals(memory, enc_padding_mask, spatial_shapes)
 
@@ -241,7 +243,8 @@ class DeformableTransformer(nn.Module):
         
 
         # remaining decoder
-        hs_o2o_, hs_o2m_, inter_references_ = self.decoder(1, 7, tgt, reference_points, memory,
+        tgt = extra_hs_o2o
+        hs_o2o_, hs_o2m_, inter_references_ = self.decoder(1, 6, tgt, reference_points, memory,
                                             spatial_shapes, level_start_index, valid_ratios, query_embed, mask_flatten, **kwargs)
         # >>===================== End following detection stage=====================
         hs_o2o = hs_o2o + hs_o2o_
