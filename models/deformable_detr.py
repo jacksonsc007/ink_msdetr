@@ -66,6 +66,7 @@ class DeformableDETR(nn.Module):
             self.query_embed = nn.Embedding(num_queries, hidden_dim*2)
         elif mixed_selection:
             self.query_embed = nn.Embedding(num_queries, hidden_dim)
+        self.extra_query_embed = nn.Embedding(num_queries, hidden_dim)
         
         if num_feature_levels > 1:
             num_backbone_outs = len(backbone.strides)
@@ -165,8 +166,9 @@ class DeformableDETR(nn.Module):
         query_embeds = None
         if not self.two_stage or self.mixed_selection:
             query_embeds = self.query_embed.weight
+            extra_query_embeds = self.extra_query_embed.weight
 
-        hs, hs_o2m, init_reference, extra_init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, anchors = self.transformer(srcs, masks, pos, query_embeds)
+        hs, hs_o2m, init_reference, extra_init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, anchors = self.transformer(srcs, masks, pos, query_embeds, extra_query_embeds)
 
         outputs_classes = []
         outputs_coords = []
@@ -222,11 +224,7 @@ class DeformableDETR(nn.Module):
 
         if self.two_stage:
             enc_outputs_coord = enc_outputs_coord_unact.sigmoid()
-            out['enc_outputs'] = {'pred_logits': enc_outputs_class[-1], 'pred_boxes': enc_outputs_coord[-1], 'anchors': anchors[-1]}
-            # anchors are shared across each encoder stages
-            aux_enc_outputs = [ {'pred_logits': a, 'pred_boxes': b, 'anchors': c}  
-                               for a, b, c in zip(enc_outputs_class[:-1], enc_outputs_coord[:-1], anchors[:-1])]
-            out['enc_outputs']['aux_outputs'] = aux_enc_outputs
+            out['enc_outputs'] = {'pred_logits': enc_outputs_class, 'pred_boxes': enc_outputs_coord, 'anchors': anchors}
 
         return out
 
@@ -509,27 +507,6 @@ class SetCriterion(nn.Module):
                 l_dict = {k + '_enc': v for k, v in l_dict.items()}
                 losses.update(l_dict)
 
-            if "aux_outputs" in enc_outputs:
-                for i, aux_outputs in enumerate(enc_outputs['aux_outputs']):
-                    # NOTE: this is a hack to use anchors for encoder matching, after matching we need to restore pred_boxes for computing loss
-                    if self.use_anchors_enc_match:
-                        aux_outputs['pred_boxes'], aux_outputs['anchors'] = aux_outputs['anchors'], aux_outputs['pred_boxes']
-                    indices = self.enc_matcher(aux_outputs, bin_targets)
-                    if self.use_anchors_enc_match:
-                        aux_outputs['pred_boxes'], aux_outputs['anchors'] = aux_outputs['anchors'], aux_outputs['pred_boxes']
-
-                    for loss in self.losses:
-                        if loss == 'masks':
-                            # Intermediate masks losses are too costly to compute, we ignore them.
-                            continue
-                        kwargs = {}
-                        if loss == 'labels':
-                            # Logging is enabled only for the last layer
-                            kwargs['log'] = False
-                        l_dict = self.get_loss(loss, aux_outputs, bin_targets, indices, num_boxes, **kwargs)
-                        l_dict = {k + f'_enc_{i}': v for k, v in l_dict.items()}
-                        losses.update(l_dict)
-                    
         return losses
 
 
