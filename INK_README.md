@@ -23,3 +23,8 @@ Sparse token scheme based on <hybrid_cascade-v2.7>
 
 ## v2.5
 Sparse token scheme based on <hybrid_cascade-v2.9>
+
+### v2.5.1
+Following focus-detr, 
+fixed topk ratio (0.3) for all layers ->
+(0.5, 0.4, 0.3, 0.3, 0.2, 0.1)
