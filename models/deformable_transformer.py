@@ -219,6 +219,7 @@ class DeformableTransformer(nn.Module):
             enc_output_box.append(enc_outputs_coord_unact)
             enc_output_proposal.append(output_proposals.sigmoid())
 
+        prev_topk_idx = topk_proposals
         extra_tgt = query_embed.unsqueeze(0).expand(bs, -1, -1)
         extra_query_pos, _= torch.split(pos_trans_out, c, dim=2)
         extra_init_dec_reference_points = reference_points
@@ -244,6 +245,11 @@ class DeformableTransformer(nn.Module):
         if self.two_stage:
             idx = 1
             output_memory, output_proposals = self.gen_encoder_output_proposals(idx, memory, enc_padding_mask, spatial_shapes)
+            
+            # refine the anchors with updated boxes
+            first_dec_ref_unact = inverse_sigmoid(dec_ref)
+            output_proposals = torch.scatter(output_proposals, 1, prev_topk_idx.unsqueeze(-1).repeat(1, 1, 4), first_dec_ref_unact)
+            assert not output_proposals.requires_grad
 
             # hack implementation for two-stage Deformable DETR
             enc_outputs_class = self.decoder.class_embed[self.decoder.num_layers](output_memory)
