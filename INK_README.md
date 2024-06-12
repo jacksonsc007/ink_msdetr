@@ -53,5 +53,12 @@ Another implementation of v2.5
 Apply two-stage scheme on both first and last encoder layers.
 
 
+
 # v2.8
 Supplant the 1st encoder layer with MultiScaleSampler (v1.4 1 head)
+
+
+# v2.9
+On the basis of v2.5, apply two-stage scheme on both first and last encoder layers.
+
+first encoder layer and last encoder layer has their own parameter for proposal generation.
