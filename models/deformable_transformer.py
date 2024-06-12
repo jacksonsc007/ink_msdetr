@@ -50,10 +50,10 @@ class DeformableTransformer(nn.Module):
         self.level_embed = nn.Parameter(torch.Tensor(num_feature_levels, d_model))
 
         if two_stage:
-            self.enc_output = nn.Linear(d_model, d_model)
-            self.enc_output_norm = nn.LayerNorm(d_model)
-            self.pos_trans = nn.Linear(d_model * 2, d_model * 2)
-            self.pos_trans_norm = nn.LayerNorm(d_model * 2)
+            self.enc_output = _get_clones(nn.Linear(d_model, d_model), 2)
+            self.enc_output_norm = _get_clones(nn.LayerNorm(d_model), 2)
+            self.pos_trans = _get_clones(nn.Linear(d_model * 2, d_model * 2), 2)
+            self.pos_trans_norm = _get_clones(nn.LayerNorm(d_model * 2), 2)
         else:
             self.reference_points = nn.Linear(d_model, 2)
 
@@ -90,7 +90,7 @@ class DeformableTransformer(nn.Module):
         pos = torch.stack((pos[:, :, :, 0::2].sin(), pos[:, :, :, 1::2].cos()), dim=4).flatten(2)
         return pos
 
-    def gen_encoder_output_proposals(self, memory, memory_padding_mask, spatial_shapes):
+    def gen_encoder_output_proposals(self, idx, memory, memory_padding_mask, spatial_shapes):
         N_, S_, C_ = memory.shape
         base_scale = 4.0
         proposals = []
@@ -119,7 +119,7 @@ class DeformableTransformer(nn.Module):
         output_memory = memory
         output_memory = output_memory.masked_fill(memory_padding_mask.unsqueeze(-1), float(0))
         output_memory = output_memory.masked_fill(~output_proposals_valid, float(0))
-        output_memory = self.enc_output_norm(self.enc_output(output_memory))
+        output_memory = self.enc_output_norm[idx](self.enc_output[idx](output_memory))
         return output_memory, output_proposals
 
     def get_valid_ratio(self, mask):
@@ -164,20 +164,16 @@ class DeformableTransformer(nn.Module):
         enc_reference_points = self.encoder.get_reference_points(spatial_shapes, valid_ratios, device=src_flatten.device)
 
         """
-        backbone feature -> 1st encoder layer -> 1st decoder layer
-        """
-        memory = self.encoder.cascade_stage_forward(0, memory, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
-
-        """
-        Generate two-stage proposals from 1st encoder layer
-        parameters for proposal generation are shared.
+        Generate two-stage proposals from backbone feature for the id-0 decoder layer
+        parameters for proposal generation are **not** shared.
         """
         enc_output_cls = []
         enc_output_box = []
         enc_output_proposal = []
         bs, _, c = memory.shape
         if self.two_stage:
-            output_memory, output_proposals = self.gen_encoder_output_proposals(memory, enc_padding_mask, spatial_shapes)
+            idx = 0
+            output_memory, output_proposals = self.gen_encoder_output_proposals(idx, memory, enc_padding_mask, spatial_shapes)
 
             # hack implementation for two-stage Deformable DETR
             enc_outputs_class = self.decoder.class_embed[self.decoder.num_layers](output_memory)
@@ -189,7 +185,7 @@ class DeformableTransformer(nn.Module):
             topk_coords_unact = topk_coords_unact.detach()
             reference_points = topk_coords_unact.sigmoid()
             # init_reference_out = reference_points
-            pos_trans_out = self.pos_trans_norm(self.pos_trans(self.get_proposal_pos_embed(topk_coords_unact)))
+            pos_trans_out = self.pos_trans_norm[idx](self.pos_trans[idx](self.get_proposal_pos_embed(topk_coords_unact)))
 
             enc_output_cls.append(enc_outputs_class)
             enc_output_box.append(enc_outputs_coord_unact)
@@ -229,12 +225,14 @@ class DeformableTransformer(nn.Module):
         """
         remaining encoder layers ->  two-stage proposal generation -> remaining decoder layers
         """
-        memory = self.encoder(1, 6, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, 
+        memory = self.encoder(0, 6, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, 
                               lvl_pos_embed_flatten, mask_flatten, topk_enc_token_indice, valid_enc_token_num)
-        # prepare input for 1st decoder stage
+
+        # prepare proposal for id-1 decoder stage
         assert self.two_stage and self.mixed_selection
         if self.two_stage:
-            output_memory, output_proposals = self.gen_encoder_output_proposals(memory, enc_padding_mask, spatial_shapes)
+            idx = 1
+            output_memory, output_proposals = self.gen_encoder_output_proposals(idx, memory, enc_padding_mask, spatial_shapes)
 
             # hack implementation for two-stage Deformable DETR
             enc_outputs_class = self.decoder.class_embed[self.decoder.num_layers](output_memory)
@@ -246,7 +244,7 @@ class DeformableTransformer(nn.Module):
             topk_coords_unact = topk_coords_unact.detach()
             reference_points = topk_coords_unact.sigmoid()
             init_reference_out = reference_points
-            pos_trans_out = self.pos_trans_norm(self.pos_trans(self.get_proposal_pos_embed(topk_coords_unact)))
+            pos_trans_out = self.pos_trans_norm[idx](self.pos_trans[idx](self.get_proposal_pos_embed(topk_coords_unact)))
 
             if not self.mixed_selection:
                 query_embed, tgt = torch.split(pos_trans_out, c, dim=2)
@@ -265,11 +263,6 @@ class DeformableTransformer(nn.Module):
             tgt = tgt.unsqueeze(0).expand(bs, -1, -1)
             reference_points = self.reference_points(query_embed).sigmoid()
             init_reference_out = reference_points
-
-        # >>===================== End 1st detection stage=====================
-        
-        # >>===================== Start following detection stage=====================
-        
 
         # remaining decoder
         tgt = extra_hs_o2o
