@@ -7,7 +7,7 @@ dataset=minicoco
 batch_size=16
 device_code=3060x8_2
 backbone=resnet18
-branch=sparse_token_v2.5.1_topk0.3
+branch=sparse_token_v2.5.2_topk0.3
 num_queries=100
 
 exp_code=${branch}-shortersize480-${device_code}_${dataset}-cascade-msdetr_${backbone}_enc${num_enc_layers}_dec${num_dec_layers}_query${num_queries}-bs${batch_size}

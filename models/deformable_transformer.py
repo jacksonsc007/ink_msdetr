@@ -316,20 +316,10 @@ class DeformableTransformerEncoderLayer(nn.Module):
         src = self.norm2(src)
         return src
 
-    def forward(self, src, query, pos, reference_points, spatial_shapes, level_start_index, padding_mask=None, topk_enc_token_indice=None, valid_enc_token_num=None):
+    def forward(self, src, query, pos, reference_points, spatial_shapes, level_start_index, padding_mask=None):
         # self attention
         src2, _, _ = self.self_attn(self.with_pos_embed(query, pos), reference_points, src, spatial_shapes, level_start_index, padding_mask)
-        if topk_enc_token_indice is not None:
-            outputs=[]
-            for img_id, (num, idx) in enumerate(zip(valid_enc_token_num, topk_enc_token_indice)):
-                valid_idx = idx[:num]
-                # src[0]: (ori_num_token, 256)
-                # idx: (valid_num,) -> (valid_num, 256)
-                # sparse_memory[0]: (max_token_num, 256)
-                # src[0][index[i,j], j] = sparse_memory[0][i,j]
-                outputs.append(src[img_id].scatter(dim=0, index=valid_idx.unsqueeze(1).repeat(1, src.size(-1)), src=src2[img_id][:num]))
-            src2 = torch.stack(outputs)
-        src = src + self.dropout1(src2)
+        src = query + self.dropout1(src2)
         src = self.norm1(src)
 
         # ffn
@@ -377,8 +367,18 @@ class DeformableTransformerEncoder(nn.Module):
             sparse_enc_query_pos = pos.gather(dim=1, index=topk_enc_token_indice.unsqueeze(dim=2).repeat(1, 1, d_model))
             sparse_enc_ref = reference_points.gather(dim=1, index=topk_enc_token_indice.unsqueeze(dim=2).unsqueeze(dim=3).repeat(1, 1, num_lvl, 2)) # (x, y) for ref points
             sparse_enc_query = output.gather(dim=1, index=topk_enc_token_indice.unsqueeze(dim=2).repeat(1, 1, d_model))
-            output = self.layers[layer_idx]( output, sparse_enc_query, sparse_enc_query_pos, sparse_enc_ref, spatial_shapes,
-                                             level_start_index, padding_mask, topk_enc_token_indice, valid_enc_token_num)
+            sparse_output = self.layers[layer_idx]( output, sparse_enc_query, sparse_enc_query_pos, sparse_enc_ref, spatial_shapes,
+                                             level_start_index, padding_mask)
+
+            """Since each image has its own valid_num_token, we need to gather the sparse tokens for each image"""
+            outputs=[]
+            for img_id, (num, idx) in enumerate(zip(valid_enc_token_num, topk_enc_token_indice)):
+                valid_idx = idx[:num]
+                # src[0]: (ori_num_token, 256)
+                # valid_idx: (valid_num,) -> (valid_num, 256)
+                # sparse_output[0]: (max_token_num, 256)
+                outputs.append(output[img_id].scatter(dim=0, index=valid_idx.unsqueeze(1).repeat(1, d_model), src=sparse_output[img_id][:num]))
+            output = torch.stack(outputs)
 
         return output
 
