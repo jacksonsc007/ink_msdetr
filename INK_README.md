@@ -36,3 +36,6 @@ Amend the sparse token formulation for v2.5.1
 # v3
 ## v3.0
 Sparse token scheme based on <hybrid_cascade-v1.6>
+
+## v3.0.1
+Based on v3.0, use cumulative cross attention map.
