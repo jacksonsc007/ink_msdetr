@@ -31,3 +31,8 @@ fixed topk ratio (0.3) for all layers ->
 
 ### v2.5.2
 Amend the sparse token formulation for v2.5.1
+
+
+# v3
+## v3.0
+Sparse token scheme based on <hybrid_cascade-v1.6>
