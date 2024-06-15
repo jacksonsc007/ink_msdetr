@@ -222,7 +222,7 @@ class DeformableTransformer(nn.Module):
             # shape:  (bs, num_q)
             outputs_class_score= self.decoder.class_embed[dec_start_idx-1](dec_query_o2o).max(-1)[0].sigmoid()
             # modulate attn weight with class score
-            dec_attention_weights = dec_attention_weights * outputs_class_score.reshape(bs, num_dec_q, 1, 1, 1)
+            dec_attention_weights = dec_attention_weights + outputs_class_score.reshape(bs, num_dec_q, 1, 1, 1)
             # ==== select tokens =====
             dec_sampling_locations = dec_sampling_locations[:, None]
             dec_attention_weights = dec_attention_weights[:, None]

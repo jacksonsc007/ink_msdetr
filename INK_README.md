@@ -48,3 +48,6 @@ Based on v3.0, use class score to filter out low-confidence queries, which would
 
 ### v3.1.1
 Instead of filtering by class score, use it to modualte attention weights.
+
+### v3.1.2
+Based on v3.1.1, change modulation from multiplication to addition.
