@@ -37,11 +37,18 @@ Amend the sparse token formulation for v2.5.1
 ## v3.0
 Sparse token scheme based on <hybrid_cascade-v1.6>
 
-## v3.0.1
+### v3.0.1
 Based on v3.0, use cumulative cross attention map.
 
-## v3.0.2
+### v3.0.2
 Enhance the sparse token formulation of v3.0. Unselected tokens will not go through FFN.
+
+### v3.0.3
+Based on v3.0 and following the idea of v3.0.1, consider previous cross attention map, but in this version:
+
+1. use the max value of all attention maps. 
+
+
 
 ## v3.1
 Based on v3.0, use class score to filter out low-confidence queries, which would not participate the calculation of cross attention map.
