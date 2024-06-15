@@ -45,3 +45,6 @@ Enhance the sparse token formulation of v3.0. Unselected tokens will not go thro
 
 ## v3.1
 Based on v3.0, use class score to filter out low-confidence queries, which would not participate the calculation of cross attention map.
+
+### v3.1.1
+Instead of filtering by class score, use it to modualte attention weights.

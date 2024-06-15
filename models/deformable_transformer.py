@@ -214,9 +214,15 @@ class DeformableTransformer(nn.Module):
         valid_tokens_nums_all_imgs = (~mask_flatten).int().sum(dim=1)
         valid_enc_token_num =  (valid_tokens_nums_all_imgs * 0.3 ).int() + 1
         batch_token_num = max(valid_enc_token_num)
+        bs, num_dec_q, nheads, nlvls, npoints, _ = dec_sampling_locations.shape
+        topk_obj_num = int(num_dec_q * 0.2)
         for enc_start_idx, enc_end_idx, dec_start_idx, dec_end_idx in ( (0, 1, 1, 2), 
                                                                         (1, 3, 2, 3),
                                                                         (3, 6, 3, 6)):
+            # shape:  (bs, num_q)
+            outputs_class_score= self.decoder.class_embed[dec_start_idx-1](dec_query_o2o).max(-1)[0].sigmoid()
+            # modulate attn weight with class score
+            dec_attention_weights = dec_attention_weights * outputs_class_score.reshape(bs, num_dec_q, 1, 1, 1)
             # ==== select tokens =====
             dec_sampling_locations = dec_sampling_locations[:, None]
             dec_attention_weights = dec_attention_weights[:, None]
@@ -280,10 +286,20 @@ class DeformableTransformerEncoderLayer(nn.Module):
         src = self.norm2(src)
         return src
 
-    def forward(self, src, query, pos, reference_points, spatial_shapes, level_start_index, padding_mask=None):
+    def forward(self, src, query, pos, reference_points, spatial_shapes, level_start_index, padding_mask=None, topk_enc_token_indice=None, valid_enc_token_num=None):
         # self attention
         src2, _, _ = self.self_attn(self.with_pos_embed(query, pos), reference_points, src, spatial_shapes, level_start_index, padding_mask)
-        src = query + self.dropout1(src2)
+        if topk_enc_token_indice is not None:
+            outputs=[]
+            for img_id, (num, idx) in enumerate(zip(valid_enc_token_num, topk_enc_token_indice)):
+                valid_idx = idx[:num]
+                # src[0]: (ori_num_token, 256)
+                # idx: (valid_num,) -> (valid_num, 256)
+                # sparse_memory[0]: (max_token_num, 256)
+                # src[0][index[i,j], j] = sparse_memory[0][i,j]
+                outputs.append(src[img_id].scatter(dim=0, index=valid_idx.unsqueeze(1).repeat(1, src.size(-1)), src=src2[img_id][:num]))
+            src2 = torch.stack(outputs)
+        src = src + self.dropout1(src2)
         src = self.norm1(src)
 
         # ffn
@@ -325,17 +341,8 @@ class DeformableTransformerEncoder(nn.Module):
 
         for layer_idx in range(start_layer_idx, end_layer_idx):
             sparse_enc_query = output.gather(dim=1, index=topk_enc_token_indice.unsqueeze(dim=2).repeat(1, 1, d_model))
-            sparse_output = self.layers[layer_idx]( output, sparse_enc_query, sparse_enc_query_pos, sparse_enc_ref, spatial_shapes,
-                                             level_start_index, padding_mask)
-            outputs=[]
-            for img_id, (num, idx) in enumerate(zip(valid_enc_token_num, topk_enc_token_indice)):
-                valid_idx = idx[:num]
-                # src[0]: (ori_num_token, 256)
-                # idx: (valid_num,) -> (valid_num, 256)
-                # sparse_memory[0]: (max_token_num, 256)
-                # src[0][index[i,j], j] = sparse_memory[0][i,j]
-                outputs.append(output[img_id].scatter(dim=0, index=valid_idx.unsqueeze(1).repeat(1, d_model), src=sparse_output[img_id][:num]))
-            output = torch.stack(outputs)
+            output = self.layers[layer_idx]( output, sparse_enc_query, sparse_enc_query_pos, sparse_enc_ref, spatial_shapes,
+                                             level_start_index, padding_mask, topk_enc_token_indice, valid_enc_token_num)
 
         return output
 
