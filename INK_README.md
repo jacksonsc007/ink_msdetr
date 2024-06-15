@@ -39,3 +39,6 @@ Sparse token scheme based on <hybrid_cascade-v1.6>
 
 ## v3.0.1
 Based on v3.0, use cumulative cross attention map.
+
+## v3.1
+Based on v3.0, use class score to filter out low-confidence queries, which would not participate the calculation of cross attention map.

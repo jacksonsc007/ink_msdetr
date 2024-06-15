@@ -214,19 +214,25 @@ class DeformableTransformer(nn.Module):
         valid_tokens_nums_all_imgs = (~mask_flatten).int().sum(dim=1)
         valid_enc_token_num =  (valid_tokens_nums_all_imgs * 0.3 ).int() + 1
         batch_token_num = max(valid_enc_token_num)
+        bs, num_dec_q, nheads, nlvls, npoints, _ = dec_sampling_locations.shape
+        topk_obj_num = int(num_dec_q * 0.2)
         for enc_start_idx, enc_end_idx, dec_start_idx, dec_end_idx in ( (0, 1, 1, 2), 
                                                                         (1, 3, 2, 3),
                                                                         (3, 6, 3, 6)):
+            outputs_class = self.decoder.class_embed[dec_start_idx-1](dec_query_o2o).max(-1)[0]
+            obj_q_idx = outputs_class.topk(topk_obj_num, dim=1)[1]
+            # sampling_locations: (1, 300, 8, 4, 4, 2)
+            dec_sampling_locations = torch.gather(dec_sampling_locations, dim=1, 
+                                                  index=obj_q_idx.reshape(bs, topk_obj_num, 1, 1, 1, 1).expand(bs, topk_obj_num, nheads, nlvls, npoints, 2))
+            dec_attention_weights = torch.gather(dec_attention_weights, dim=1,
+                                                 index=obj_q_idx.reshape(bs, topk_obj_num, 1, 1, 1).expand(bs, topk_obj_num, nheads, nlvls, npoints))
+
             # ==== select tokens =====
-            dec_sampling_locations = dec_sampling_locations[:, None].detach()
-            dec_attention_weights = dec_attention_weights[:, None].detach()
+            dec_sampling_locations = dec_sampling_locations[:, None]
+            dec_attention_weights = dec_attention_weights[:, None]
             # (bs, 1, num_head, num_all_lvl_tokens) -> (bs, num_all_lvl_tokens)
             cross_attn_map = attn_map_to_flat_grid(spatial_shapes, level_start_index, dec_sampling_locations, dec_attention_weights).sum(dim=(1,2))
-            cross_attn_map_list.append(cross_attn_map)
-
             assert cross_attn_map.size() == mask_flatten.size()
-            # use cumulative sum to aggregate previous information
-            cross_attn_map = sum(cross_attn_map_list)
             cross_attn_map = cross_attn_map.masked_fill(mask_flatten, cross_attn_map.min()-1)
             topk_enc_token_indice = cross_attn_map.topk(batch_token_num, dim=1)[1] # (bs, batch_token_num)
 
