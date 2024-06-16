@@ -184,7 +184,6 @@ class DeformableTransformer(nn.Module):
         level_start_index = torch.cat((spatial_shapes.new_zeros((1, )), spatial_shapes.prod(1).cumsum(0)[:-1]))
         valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks], 1)
 
-        # ===================== Start cascade detection stage =====================
         hs_o2o = []
         hs_o2m = [] 
         inter_references = []
@@ -193,7 +192,9 @@ class DeformableTransformer(nn.Module):
         enc_padding_mask = mask_flatten
         enc_reference_points = self.encoder.get_reference_points(spatial_shapes, valid_ratios, device=src_flatten.device)
 
-        """first stage: use backbone feature and id-0 decoder layer"""
+        """
+        initialize decoder queries
+        """
         bs, _, c = memory.shape
         assert not self.two_stage
         if self.two_stage:
@@ -236,21 +237,14 @@ class DeformableTransformer(nn.Module):
         hs_o2m.append(dec_query_o2m)
         inter_references.append(dec_new_ref if self.decoder.look_forward_twice else dec_ref)
 
-        """backbone feature -> id-0 encoder layer -> id-1 decoder layer"""
-        memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
-        # decoder
-        dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref= \
-            self.decoder.cascade_stage_forward(1, dec_query_o2o, dec_ref, memory,
-                spatial_shapes, level_start_index, valid_ratios, dec_query_pos, enc_padding_mask, **kwargs)
-
-        hs_o2o.append(dec_query_o2o)
-        hs_o2m.append(dec_query_o2m)
-        inter_references.append(dec_new_ref if self.decoder.look_forward_twice else dec_ref)
-        # >>===================== End 1st detection stage=====================
-        
-        # >>===================== Start following detection stage=====================
-        for enc_start_layer_idx, enc_end_layer_idx, dec_start_layer_idx, dec_end_layer_idx in ((1, 2, 2, 2), (3, 5, 3, 5)):
-            # remaining encoder
+        combinations = ( 
+             (0, 0, 1, 1), 
+             (1, 1, 2, 2), 
+             (2, 2, 3, 3), 
+             (3, 3, 4, 4),
+             (4, 5, 5, 5)
+        )
+        for enc_start_layer_idx, enc_end_layer_idx, dec_start_layer_idx, dec_end_layer_idx in  combinations:
             memory = self.encoder(enc_start_layer_idx, enc_end_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
 
             # remaining decoder
