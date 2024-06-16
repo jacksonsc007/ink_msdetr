@@ -58,3 +58,6 @@ Instead of filtering by class score, use it to modualte attention weights.
 
 ### v3.1.2
 Based on v3.1.1, change modulation from multiplication to addition.
+
+## v3.2
+Inpired by v3.1.2, we try to use class score directly to select salient tokens, instead of using cross attn map.
