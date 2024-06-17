@@ -61,7 +61,6 @@ class DeformableTransformer(nn.Module):
 
         self.num_detection_stages = len( self.encoder.layers )
         assert self.num_detection_stages == len( self.decoder.layers )
-        self.num_feature_levels = num_feature_levels
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -213,38 +212,29 @@ class DeformableTransformer(nn.Module):
         cross_attn_map_list = []
 
         valid_tokens_nums_all_imgs = (~mask_flatten).int().sum(dim=1)
-        valid_enc_token_num =  (valid_tokens_nums_all_imgs * 0.3 ).int() + 1
-        batch_token_num = max(valid_enc_token_num)
-        
-        tokens_per_lvl = spatial_shapes.prod(1).unbind()
-        for enc_start_idx, enc_end_idx, dec_start_idx, dec_end_idx in ( (0, 1, 1, 2), 
-                                                                        (1, 3, 2, 3),
-                                                                        (3, 6, 3, 6)):
+        bs, num_dec_q, nheads, nlvls, npoints, _ = dec_sampling_locations.shape
+        stage_ratios = [0.4, 0.3, 0.2]
+        alpha = 0.5
+        for idx, (enc_start_idx, enc_end_idx, dec_start_idx, dec_end_idx) in enumerate( 
+            ((0, 1, 1, 2), 
+             (1, 3, 2, 3),
+             (3, 6, 3, 6))
+            ):
+            # shape:  (bs, num_q)
+            outputs_class_score= self.decoder.class_embed[dec_start_idx-1](dec_query_o2o).max(-1)[0].sigmoid()
+            # modulate attn weight with class score
+            dec_attention_weights = alpha * dec_attention_weights + (1 - alpha) * outputs_class_score.reshape(bs, num_dec_q, 1, 1, 1)
             # ==== select tokens =====
             dec_sampling_locations = dec_sampling_locations[:, None]
             dec_attention_weights = dec_attention_weights[:, None]
             # (bs, 1, num_head, num_all_lvl_tokens) -> (bs, num_all_lvl_tokens)
             cross_attn_map = attn_map_to_flat_grid(spatial_shapes, level_start_index, dec_sampling_locations, dec_attention_weights).sum(dim=(1,2))
-            
-            modulated_attn_map = []
-            cross_attn_map_lvl = cross_attn_map.split(tokens_per_lvl, dim=1)
-            for lvl in range(self.num_feature_levels-1, -1, -1):
-                if lvl == self.num_feature_levels - 1:
-                    lvl_map = cross_attn_map_lvl[lvl]
-                    modulated_attn_map.insert(0, lvl_map)
-                    h, w = spatial_shapes[lvl]
-                    prev_map = lvl_map.reshape(bs, 1, h, w)
-                else:
-                    h, w = spatial_shapes[lvl]
-                    lvl_map = cross_attn_map_lvl[lvl].reshape(bs, 1, h, w)
-                    prev_map = F.interpolate(prev_map, size=(h, w), mode='bilinear', align_corners=True)
-                    prev_map = torch.stack([prev_map, lvl_map], -1).max(-1)[0]
-                    modulated_attn_map.insert(0, prev_map.reshape(bs, h*w))
-            modulated_attn_map = torch.cat(modulated_attn_map, dim=1)
-            cross_attn_map = modulated_attn_map
-
             assert cross_attn_map.size() == mask_flatten.size()
             cross_attn_map = cross_attn_map.masked_fill(mask_flatten, cross_attn_map.min()-1)
+            
+            valid_enc_token_num =  (valid_tokens_nums_all_imgs * stage_ratios[idx] ).int() + 1
+            batch_token_num = max(valid_enc_token_num)
+
             topk_enc_token_indice = cross_attn_map.topk(batch_token_num, dim=1)[1] # (bs, batch_token_num)
 
             memory = self.encoder(enc_start_idx, enc_end_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, 

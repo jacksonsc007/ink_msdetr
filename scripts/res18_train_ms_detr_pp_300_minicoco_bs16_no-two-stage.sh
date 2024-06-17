@@ -6,7 +6,7 @@ num_dec_layers=6
 dataset=minicoco
 batch_size=4
 device_code=3090x8_1
-branch=sparse_token_v3.3_ratio0.3_alpha0.3
+branch=sparse_token_v3.1.4
 backbone=resnet18
 num_queries=100
 
