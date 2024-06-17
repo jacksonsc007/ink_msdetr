@@ -73,3 +73,6 @@ Inpired by v3.1.2, we try to use class score directly to select salient tokens, 
 
 ## v3.3
 Following focus-detr, use top down modulation. v3.0 are used as base model.
+
+### v3.3.1
+Instead of using max operation in the modualtion, use mean.
