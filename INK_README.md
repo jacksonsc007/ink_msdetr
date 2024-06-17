@@ -66,3 +66,7 @@ final_score = alpha * attn_weight + (1-alpha)*cls_score
 
 ## v3.2
 Inpired by v3.1.2, we try to use class score directly to select salient tokens, instead of using cross attn map.
+
+
+## v3.3
+Following focus-detr, use top down modulation. v3.0 are used as base model.
