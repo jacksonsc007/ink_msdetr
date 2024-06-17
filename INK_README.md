@@ -48,6 +48,9 @@ Based on v3.0 and following the idea of v3.0.1, consider previous cross attentio
 
 1. use the max value of all attention maps. 
 
+### v3.0.4
+Based on v3.0, apply layer-specific sampling ratio.
+
 
 
 ## v3.1
