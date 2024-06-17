@@ -79,3 +79,8 @@ Following focus-detr, use top down modulation. v3.0 are used as base model.
 
 ### v3.3.1
 Instead of using max operation in the modualtion, use mean.
+
+
+
+# v4
+Sparse token scheme based on <hybrid_cascade-v1.7>
