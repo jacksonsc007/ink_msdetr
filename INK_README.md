@@ -59,5 +59,10 @@ Instead of filtering by class score, use it to modualte attention weights.
 ### v3.1.2
 Based on v3.1.1, change modulation from multiplication to addition.
 
+### v3.1.3
+Based on v3.1.2, generalize the addition formulation with an additional fixed parameter:
+
+final_score = alpha * attn_weight + (1-alpha)*cls_score
+
 ## v3.2
 Inpired by v3.1.2, we try to use class score directly to select salient tokens, instead of using cross attn map.
