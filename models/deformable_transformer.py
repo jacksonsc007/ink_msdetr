@@ -20,6 +20,7 @@ from util.misc import inverse_sigmoid
 from models.ops.modules import MSDeformAttn
 # from config import *
 
+from .aligner import MultiScaleAligner_v1734 as MultiScaleAligner
 
 class DeformableTransformer(nn.Module):
     def __init__(self, d_model=256, nhead=8,
@@ -59,8 +60,18 @@ class DeformableTransformer(nn.Module):
 
         self._reset_parameters()
 
-        self.num_detection_stages = len( self.decoder.layers )
+        self.num_detection_stages = len( self.encoder.layers )
+        assert self.num_detection_stages == len( self.decoder.layers )
 
+        self.MultiScaleAligner = MultiScaleAligner(
+            num_levels=num_feature_levels,
+            norm_type="GN",
+            in_channels=self.d_model,
+            out_channels=self.d_model
+        )
+        
+        self.MultiScaleAligner = _get_clones(self.MultiScaleAligner, 3)
+        self.num_feature_levels = num_feature_levels
     def _reset_parameters(self):
         for p in self.parameters():
             if p.dim() > 1:
@@ -192,10 +203,9 @@ class DeformableTransformer(nn.Module):
         enc_padding_mask = mask_flatten
         enc_reference_points = self.encoder.get_reference_points(spatial_shapes, valid_ratios, device=src_flatten.device)
 
-        # >>===================== Start 1st detection stage=====================
-        # memory = self.encoder.cascade_stage_forward(0, memory, spatial_shapes, level_start_index, enc_reference_points, enc_pos, enc_padding_mask)
-        # prepare input for 1st decoder stage
+        """first stage: use backbone feature and id-0 decoder layer"""
         bs, _, c = memory.shape
+        assert not self.two_stage
         if self.two_stage:
             output_memory, output_proposals = self.gen_encoder_output_proposals(memory, enc_padding_mask, spatial_shapes)
 
@@ -228,7 +238,6 @@ class DeformableTransformer(nn.Module):
         init_dec_tgt = tgt
         dec_query_pos = query_embed
         init_dec_reference_points = reference_points
-        # decoder
         dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref= \
             self.decoder.cascade_stage_forward(0, init_dec_tgt, init_dec_reference_points, memory,
                 spatial_shapes, level_start_index, valid_ratios, dec_query_pos, enc_padding_mask, **kwargs)
@@ -236,21 +245,38 @@ class DeformableTransformer(nn.Module):
         hs_o2o.append(dec_query_o2o)
         hs_o2m.append(dec_query_o2m)
         inter_references.append(dec_new_ref if self.decoder.look_forward_twice else dec_ref)
-        # >>===================== End 1st detection stage=====================
-        
-        # >>===================== Start following detection stage=====================
-        # remaining encoder
-        enc_start_layer_idx = 0
-        dec_start_layer_idx = 1
-        memory = self.encoder(enc_start_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
 
-        # remaining decoder
-        hs_o2o_, hs_o2m_, inter_references_ = self.decoder(dec_start_layer_idx, dec_query_o2o, dec_ref, memory,
-                                            spatial_shapes, level_start_index, valid_ratios, dec_query_pos, mask_flatten, **kwargs)
-        # >>===================== End following detection stage=====================
-        hs_o2o = hs_o2o + hs_o2o_
-        hs_o2m = hs_o2m + hs_o2m_
-        inter_references = inter_references + inter_references_
+        combs = (
+            (0, 1, 1, 1),
+            (2, 3, 2, 2),
+            (4, 5, 3, 5)
+        )
+        num_tokens_per_lvl = spatial_shapes.prod(-1).unbind() 
+        for stage_idx, (enc_start_layer_idx, enc_end_layer_idx, dec_start_layer_idx, dec_end_layer_idx) in enumerate(combs):
+            memory = self.encoder(enc_start_layer_idx, enc_end_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
+
+            # apply aligner
+            memory_list = memory.split(num_tokens_per_lvl, dim=1)
+            spatial_memory_list = []
+            for lvl in range(self.num_feature_levels):
+                h, w = spatial_shapes[lvl]
+                spatial_memory_list.append(
+                    memory_list[lvl].reshape(bs, h, w, c).permute(0, 3, 1, 2)
+                )
+            spatial_memory_list = self.MultiScaleAligner[stage_idx](spatial_memory_list)
+            spatial_memory_list = [_.permute(0, 2, 3, 1).flatten(1,2) for _ in spatial_memory_list]
+            spatial_memory_list = torch.cat(spatial_memory_list, dim=1)
+            aligned_memory = spatial_memory_list
+
+
+            hs_o2o_, hs_o2m_, inter_references_ = self.decoder(dec_start_layer_idx, dec_end_layer_idx, dec_query_o2o, dec_ref, aligned_memory,
+                                                spatial_shapes, level_start_index, valid_ratios, dec_query_pos, mask_flatten, **kwargs)
+            dec_query_o2o = hs_o2o_[-1]
+            dec_ref = inter_references_[-1].detach()
+            # >>===================== End following detection stage=====================
+            hs_o2o = hs_o2o + hs_o2o_
+            hs_o2m = hs_o2m + hs_o2m_
+            inter_references = inter_references + inter_references_
 
         inter_references = torch.stack(inter_references)
         hs_o2m = torch.stack(hs_o2m)
@@ -259,7 +285,7 @@ class DeformableTransformer(nn.Module):
         # ===================== End cascade detection stage =====================
         if self.two_stage:
             return hs_o2o, hs_o2m, init_reference_out, inter_references_out, enc_outputs_class, enc_outputs_coord_unact, output_proposals.sigmoid(),
-        return hs_o2o, hs_o2m, init_reference_out, inter_references_out, None, None, output_proposals.sigmoid(),
+        return hs_o2o, hs_o2m, init_reference_out, inter_references_out, None, None, None
 
 
 class DeformableTransformerEncoderLayer(nn.Module):
@@ -325,9 +351,9 @@ class DeformableTransformerEncoder(nn.Module):
         reference_points = reference_points[:, :, None] * valid_ratios[:, None]
         return reference_points
 
-    def forward(self, start_layer_idx, reference_points, src, spatial_shapes, level_start_index, valid_ratios, pos=None, padding_mask=None):
+    def forward(self, start_layer_idx, end_layer_idx, reference_points, src, spatial_shapes, level_start_index, valid_ratios, pos=None, padding_mask=None):
         output = src
-        for layer_idx in range(start_layer_idx, self.num_layers):
+        for layer_idx in range(start_layer_idx, end_layer_idx + 1):
             layer = self.layers[layer_idx]
             output = layer(output, pos, reference_points, spatial_shapes, level_start_index, padding_mask)
 
@@ -444,14 +470,14 @@ class DeformableTransformerDecoder(nn.Module):
         self.look_forward_twice = look_forward_twice
         self.use_ms_detr = use_ms_detr
 
-    def forward(self, start_layer_idx, tgt, reference_points, src, src_spatial_shapes, src_level_start_index, src_valid_ratios,
+    def forward(self, start_layer_idx, end_layer_idx, tgt, reference_points, src, src_spatial_shapes, src_level_start_index, src_valid_ratios,
                 query_pos=None, src_padding_mask=None, **kwargs):
         output = tgt
 
         intermediate = []
         intermediate_o2m = []
         intermediate_reference_points = []
-        for lid in range(start_layer_idx, self.num_layers):
+        for lid in range(start_layer_idx, end_layer_idx + 1):
             layer = self.layers[lid]
             if reference_points.shape[-1] == 4:
                 reference_points_input = reference_points[:, :, None] \
