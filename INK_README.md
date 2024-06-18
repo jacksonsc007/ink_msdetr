@@ -84,3 +84,7 @@ Instead of using max operation in the modualtion, use mean.
 
 # v4
 Sparse token scheme based on <hybrid_cascade-v1.7>
+
+
+# v5
+Sparse token scheme based on <hybrid_cascade-v1.8>
