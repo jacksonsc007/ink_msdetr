@@ -237,8 +237,9 @@ class DeformableTransformer(nn.Module):
         inter_references.append(dec_new_ref if self.decoder.look_forward_twice else dec_ref)
 
         combs = (
-            (0, 2, 1, 2),
-            (3, 5, 3, 5),
+            (0, 1, 1, 1),
+            (2, 3, 2, 2),
+            (4, 5, 3, 5)
         )
         for enc_start_layer_idx, enc_end_layer_idx, dec_start_layer_idx, dec_end_layer_idx in combs:
             # remaining encoder

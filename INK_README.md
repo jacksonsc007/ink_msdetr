@@ -23,6 +23,9 @@ Branch name: hybrid_cascade_msdetr
 # v1.8
 
 
+# v1.9
+
+
 # v2.0
 
 ## v2.0.1
