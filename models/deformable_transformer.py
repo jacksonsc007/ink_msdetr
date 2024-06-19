@@ -211,14 +211,12 @@ class DeformableTransformer(nn.Module):
         inter_references.append(dec_new_ref if self.decoder.look_forward_twice else dec_ref)
         cross_attn_map_list = []
 
-        valid_tokens_nums_all_imgs = (~mask_flatten).int().sum(dim=1)
-        valid_enc_token_num =  (valid_tokens_nums_all_imgs * 0.3 ).int() + 1
-        batch_token_num = max(valid_enc_token_num)
         combinations = (
             (0, 2, 1, 2),
             (2, 4, 2, 3),
             (4, 6, 3, 6)
         )
+        self.encoder.sample_ratio = [0.5, 0.4, 0.3, 0.3, 0.2, 0.1]
         for enc_start_idx, enc_end_idx, dec_start_idx, dec_end_idx in combinations:
             # ==== select tokens =====
             dec_sampling_locations = dec_sampling_locations[:, None]
@@ -227,10 +225,9 @@ class DeformableTransformer(nn.Module):
             cross_attn_map = attn_map_to_flat_grid(spatial_shapes, level_start_index, dec_sampling_locations, dec_attention_weights).sum(dim=(1,2))
             assert cross_attn_map.size() == mask_flatten.size()
             cross_attn_map = cross_attn_map.masked_fill(mask_flatten, cross_attn_map.min()-1)
-            topk_enc_token_indice = cross_attn_map.topk(batch_token_num, dim=1)[1] # (bs, batch_token_num)
 
             memory = self.encoder(enc_start_idx, enc_end_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, 
-                                  lvl_pos_embed_flatten, mask_flatten, topk_enc_token_indice, valid_enc_token_num)
+                                  lvl_pos_embed_flatten, mask_flatten, cross_attn_map)
 
             hs_o2o_, hs_o2m_, inter_references_, dec_sampling_locations_list, dec_attention_weights_list = self.decoder(dec_start_idx, dec_end_idx, dec_query_o2o, dec_ref, memory,
                                                 spatial_shapes, level_start_index, valid_ratios, dec_query_pos, mask_flatten, **kwargs)
@@ -327,16 +324,20 @@ class DeformableTransformerEncoder(nn.Module):
         return reference_points
 
     def forward(self, start_layer_idx, end_layer_idx, reference_points, src, spatial_shapes, level_start_index, valid_ratios, 
-                pos, padding_mask, topk_enc_token_indice, valid_enc_token_num):
+                pos, padding_mask, attn_map ):
 
         output = src
         num_lvl = reference_points.size(2)
         d_model = src.size(2)
-        # get sparse tokens
-        sparse_enc_query_pos = pos.gather(dim=1, index=topk_enc_token_indice.unsqueeze(dim=2).repeat(1, 1, d_model))
-        sparse_enc_ref = reference_points.gather(dim=1, index=topk_enc_token_indice.unsqueeze(dim=2).unsqueeze(dim=3).repeat(1, 1, num_lvl, 2)) # (x, y) for ref points
 
         for layer_idx in range(start_layer_idx, end_layer_idx):
+            valid_tokens_nums_all_imgs = (~padding_mask).int().sum(dim=1)
+            valid_enc_token_num =  (valid_tokens_nums_all_imgs * self.sample_ratio[layer_idx] ).int() + 1
+            batch_token_num = max(valid_enc_token_num)
+            topk_enc_token_indice = attn_map.topk(batch_token_num, dim=1)[1] # (bs, batch_token_num)
+
+            sparse_enc_query_pos = pos.gather(dim=1, index=topk_enc_token_indice.unsqueeze(dim=2).repeat(1, 1, d_model))
+            sparse_enc_ref = reference_points.gather(dim=1, index=topk_enc_token_indice.unsqueeze(dim=2).unsqueeze(dim=3).repeat(1, 1, num_lvl, 2)) # (x, y) for ref points
             sparse_enc_query = output.gather(dim=1, index=topk_enc_token_indice.unsqueeze(dim=2).repeat(1, 1, d_model))
             output = self.layers[layer_idx]( output, sparse_enc_query, sparse_enc_query_pos, sparse_enc_ref, spatial_shapes,
                                              level_start_index, padding_mask, topk_enc_token_indice, valid_enc_token_num)

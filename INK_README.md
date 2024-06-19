@@ -91,3 +91,6 @@ Sparse token scheme based on <hybrid_cascade-v1.8>
 
 # v6
 Sparse token scheme based on <hybrid_cascade-v1.9>
+
+## v6.1
+Based on v6, use layer-specific sampling ratio.
