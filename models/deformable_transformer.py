@@ -215,8 +215,9 @@ class DeformableTransformer(nn.Module):
         valid_enc_token_num =  (valid_tokens_nums_all_imgs * 0.3 ).int() + 1
         batch_token_num = max(valid_enc_token_num)
         combinations = (
-            (0, 3, 1, 3),
-            (3, 6, 3, 6)
+            (0, 2, 1, 2),
+            (2, 4, 2, 3),
+            (4, 6, 3, 6)
         )
         for enc_start_idx, enc_end_idx, dec_start_idx, dec_end_idx in combinations:
             # ==== select tokens =====
