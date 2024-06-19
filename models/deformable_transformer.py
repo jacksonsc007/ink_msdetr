@@ -216,8 +216,14 @@ class DeformableTransformer(nn.Module):
             (2, 4, 2, 3),
             (4, 6, 3, 6)
         )
-        self.encoder.sample_ratio = [0.5, 0.4, 0.3, 0.3, 0.2, 0.1]
+        # self.encoder.sample_ratio = [0.5, 0.4, 0.3, 0.3, 0.2, 0.1]
+        self.encoder.sample_ratio = [0.3, 0.3, 0.3, 0.3, 0.3, 0.3]
+        beta = 0.5
+        bs, num_dec_q, n_heads, n_points, n_levels = dec_attention_weights.shape
         for enc_start_idx, enc_end_idx, dec_start_idx, dec_end_idx in combinations:
+            cls_score = self.decoder.class_embed[dec_start_idx - 1](dec_query_o2o).max(-1)[0].sigmoid().detach()
+            cls_score = cls_score.reshape(bs, num_dec_q, 1, 1, 1)
+            dec_attention_weights = (dec_attention_weights ** beta) * (cls_score ** (1 - beta))
             # ==== select tokens =====
             dec_sampling_locations = dec_sampling_locations[:, None]
             dec_attention_weights = dec_attention_weights[:, None]
