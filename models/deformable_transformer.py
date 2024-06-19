@@ -218,9 +218,12 @@ class DeformableTransformer(nn.Module):
         )
         # self.encoder.sample_ratio = [0.5, 0.4, 0.3, 0.3, 0.2, 0.1]
         self.encoder.sample_ratio = [0.3, 0.3, 0.3, 0.3, 0.3, 0.3]
+        beta = 0.5
         bs, num_dec_q, n_heads, n_points, n_levels = dec_attention_weights.shape
-        
         for enc_start_idx, enc_end_idx, dec_start_idx, dec_end_idx in combinations:
+            cls_score = self.decoder.class_embed[dec_start_idx - 1](dec_query_o2o).max(-1)[0].sigmoid().detach()
+            cls_score = cls_score.reshape(bs, num_dec_q, 1, 1, 1)
+            dec_attention_weights = (dec_attention_weights * beta) + (cls_score * (1 - beta))
             # ==== select tokens =====
             dec_sampling_locations = dec_sampling_locations[:, None]
             dec_attention_weights = dec_attention_weights[:, None]
@@ -228,8 +231,6 @@ class DeformableTransformer(nn.Module):
             cross_attn_map = attn_map_to_flat_grid(spatial_shapes, level_start_index, dec_sampling_locations, dec_attention_weights).sum(dim=(1,2))
             assert cross_attn_map.size() == mask_flatten.size()
             cross_attn_map = cross_attn_map.masked_fill(mask_flatten, cross_attn_map.min()-1)
-            # always keep last feature map
-            cross_attn_map[:, level_start_index[-1]:] = cross_attn_map.max() + 1
 
             memory = self.encoder(enc_start_idx, enc_end_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, 
                                   lvl_pos_embed_flatten, mask_flatten, cross_attn_map)
