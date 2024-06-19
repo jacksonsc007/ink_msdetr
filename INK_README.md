@@ -97,3 +97,6 @@ Based on v6, use layer-specific sampling ratio.
 
 ## v6.2
 Use cls score to modulate attn weights. Multiplication form is used in this version.
+
+## v6.3
+First attempt on feature level specific sampling. Tokens of the last feature level will always be kept.
