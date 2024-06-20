@@ -6,11 +6,11 @@ num_dec_layers=6
 dataset=minicoco
 batch_size=4
 device_code=3090x8_1
-branch=hybrid_cascade_msdetr_v1.10
+branch=iterative_box_refinement_v1.0
 backbone=resnet18
 num_queries=300
 
-exp_code=no_two_stage-shortersize480-${device_code}_${dataset}-${branch}_${backbone}_enc${num_enc_layers}_dec${num_dec_layers}_query${num_queries}-bs${batch_size}x${num_gpus}
+exp_code=shortersize480-${device_code}_${dataset}-${branch}_${backbone}_enc${num_enc_layers}_dec${num_dec_layers}_query${num_queries}-bs${batch_size}x${num_gpus}
 EXP_DIR=exps/${exp_code}
 
 mkdir -p $EXP_DIR
@@ -18,6 +18,7 @@ mkdir -p $EXP_DIR
 GPUS_PER_NODE=$num_gpus ./tools/run_dist_launch.sh $num_gpus python -u main.py \
    --backbone $backbone \
    --wandb_enabled \
+   --two_stage \
    --wandb_name ${exp_code} \
    --batch_size $batch_size \
    --enc_layers $num_enc_layers \

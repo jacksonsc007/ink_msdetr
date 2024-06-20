@@ -65,7 +65,7 @@ class DeformableDETR(nn.Module):
         if not two_stage:
             self.query_embed = nn.Embedding(num_queries, hidden_dim*2)
         elif mixed_selection:
-            self.query_embed = nn.Embedding(num_queries, hidden_dim)
+            self.query_embed = nn.Embedding(num_queries, hidden_dim*2)
         
         if num_feature_levels > 1:
             num_backbone_outs = len(backbone.strides)
