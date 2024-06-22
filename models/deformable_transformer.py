@@ -22,6 +22,10 @@ import torchvision
 from util import box_ops
 # from config import *
 
+from detectron2.modeling.poolers import ROIPooler, cat
+from detectron2.structures import Boxes
+
+
 
 class DeformableTransformer(nn.Module):
     def __init__(self, d_model=256, nhead=8,
@@ -53,14 +57,26 @@ class DeformableTransformer(nn.Module):
 
         if two_stage:
             # self.enc_output = nn.Linear(d_model, d_model)
-            # self.enc_output_norm = nn.LayerNorm(d_model)
+            self.enc_output_norm = nn.LayerNorm(d_model)
             self.pos_trans = nn.Linear(d_model * 2, d_model * 2)
             self.pos_trans_norm = nn.LayerNorm(d_model * 2)
         else:
             self.reference_points = nn.Linear(d_model, 2)
 
         self._reset_parameters()
-        self.fusion_linear = nn.Linear(d_model * 4, d_model)
+        
+        pooler_resolution = 7
+        pooler_scales = (1/4, 1/8, 1/16, 1/32)
+        sampling_ratio = 2
+        pooler_type = "ROIAlignV2"
+        self.pooler = ROIPooler(
+            output_size=pooler_resolution,
+            scales=pooler_scales,
+            sampling_ratio=sampling_ratio,
+            pooler_type=pooler_type,
+        )
+        self.fusion_linear = nn.Linear(d_model * pooler_resolution * pooler_resolution, d_model)
+
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -147,11 +163,16 @@ class DeformableTransformer(nn.Module):
         
         n_lvls = len(spatial_shapes)
         bs, _, c = memory.shape
+        num_box = roi_box.shape[1]
         # mask padding feature
 
         memory = memory.masked_fill(memory_padding_mask.unsqueeze(-1), float(0))
         tokens_per_lvl = spatial_shapes.prod(-1).unbind()
-        feat_list = memory.split(tokens_per_lvl, dim=1)
+        feat_list = list(memory.split(tokens_per_lvl, dim=1))
+        feat_list_2d = []
+        for i in range(n_lvls):
+            h, w = spatial_shapes[i]
+            feat_list_2d.append(feat_list[i].reshape(bs, h, w, c).permute(0, 3, 1, 2))
         
         # transform from cxcywh to xyxy
         roi_box = box_ops.box_cxcywh_to_xyxy(roi_box)
@@ -159,27 +180,17 @@ class DeformableTransformer(nn.Module):
         # limit roi box
         roi_box = roi_box.clamp(0.01, 0.99)
         
-        # tranform from normalized real size to normalized padding size 
-        roi_box = roi_box[:, :, None] \
-                    * torch.cat([valid_ratios, valid_ratios], dim=-1)[:, None]
-        
-        multi_lvl_roi_feat = [] 
-        for lvl in range(n_lvls):
-            feat = feat_list[lvl]
-            h, w = spatial_shapes[lvl]
-            feat = feat.reshape(bs, h, w, c).permute(0, 3, 1, 2)
-            lvl_roi = roi_box[:, :, lvl] * torch.tensor([w, h, w, h], dtype=torch.float32, device=roi_box.device)
-            roi_feature = torchvision.ops.roi_align(
-                feat,
-                list(torch.unbind(lvl_roi, dim=0)),
-                output_size=(7, 7),
-                spatial_scale=1.0,
-                aligned=True)  # (bs * num_queries, c, 7, 7)
-            roi_feature = roi_feature.mean(dim=(-1, -2)).reshape(bs, -1, c)
-            multi_lvl_roi_feat.append(roi_feature)
-        multi_lvl_roi_feat = torch.cat(multi_lvl_roi_feat, dim=-1)
-        multi_lvl_roi_feat = self.fusion_linear(multi_lvl_roi_feat)
-        return multi_lvl_roi_feat
+        # from nomalized value to real pixel value
+        roi_box = roi_box * self.real_imgsize_whwh[:, None]
+                    
+        roi_box_input = list()
+        for i in range(bs):
+            roi_box_input.append(Boxes(roi_box[i]))
+        roi_feature = self.pooler(feat_list_2d, roi_box_input)
+        roi_feature = roi_feature.flatten(1)
+        roi_feature = self.fusion_linear(roi_feature).reshape(bs, num_box, c)
+        roi_feature = self.enc_output_norm(roi_feature)
+        return roi_feature
 
     def forward(self, srcs, masks, pos_embeds, query_embed=None, dynamic_anchor_embed=None, **kwargs):
         assert self.two_stage or query_embed is not None

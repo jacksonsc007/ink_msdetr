@@ -130,7 +130,7 @@ class DeformableDETR(nn.Module):
             for box_embed in self.bbox_embed:
                 nn.init.constant_(box_embed.layers[-1].bias.data[2:], 0.0)
 
-    def forward(self, samples: NestedTensor):
+    def forward(self, samples: NestedTensor, target):
         """The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -145,6 +145,18 @@ class DeformableDETR(nn.Module):
                - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
                                 dictionnaries containing the two above keys for each decoder layer.
         """
+        bs = len(target)
+        real_imgsize_whwh = []
+        for b_id in range(bs):
+           real_size_hw = target[b_id]['size']
+           h, w = real_size_hw.unbind()
+           real_imgsize_whwh.append(
+               torch.tensor([w, h, w, h], dtype=real_size_hw.dtype, device=real_size_hw.device)
+           )
+        real_imgsize_whwh = torch.stack(real_imgsize_whwh)
+        # hack implementation
+        self.transformer.real_imgsize_whwh = real_imgsize_whwh
+
         if not isinstance(samples, NestedTensor):
             samples = nested_tensor_from_tensor_list(samples)
         features, pos = self.backbone(samples)
