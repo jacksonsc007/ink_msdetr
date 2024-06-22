@@ -66,7 +66,15 @@ class DeformableDETR(nn.Module):
             self.query_embed = nn.Embedding(num_queries, hidden_dim*2)
         elif mixed_selection:
             self.query_embed = nn.Embedding(num_queries, hidden_dim)
-        
+        self.dynamic_anchor_embed = nn.Embedding(num_queries, 4)
+        # torch.nn.init.constant_(self.dynamic_anchor_embed.weight[:, :2], 0.5)
+        # torch.nn.init.constant_(self.dynamic_anchor_embed.weight[:, 2:], 1.0)
+        nn.init.uniform_(self.dynamic_anchor_embed.weight)
+        self.dynamic_anchor_embed.weight.data[:] = inverse_sigmoid(
+            self.dynamic_anchor_embed.weight.data[:]
+        ).clamp(-3, 3)
+
+
         if num_feature_levels > 1:
             num_backbone_outs = len(backbone.strides)
             input_proj_list = []
@@ -165,8 +173,9 @@ class DeformableDETR(nn.Module):
         query_embeds = None
         if not self.two_stage or self.mixed_selection:
             query_embeds = self.query_embed.weight
+        dynamic_anchor_embed = self.dynamic_anchor_embed.weight
 
-        hs, hs_o2m, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, anchors = self.transformer(srcs, masks, pos, query_embeds)
+        hs, hs_o2m, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, anchors = self.transformer(srcs, masks, pos, query_embeds, dynamic_anchor_embed)
 
         outputs_classes = []
         outputs_coords = []

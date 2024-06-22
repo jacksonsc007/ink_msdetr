@@ -18,6 +18,8 @@ from torch.nn.init import xavier_uniform_, constant_, uniform_, normal_
 
 from util.misc import inverse_sigmoid
 from models.ops.modules import MSDeformAttn
+import torchvision
+from util import box_ops
 # from config import *
 
 
@@ -50,14 +52,15 @@ class DeformableTransformer(nn.Module):
         self.level_embed = nn.Parameter(torch.Tensor(num_feature_levels, d_model))
 
         if two_stage:
-            self.enc_output = nn.Linear(d_model, d_model)
-            self.enc_output_norm = nn.LayerNorm(d_model)
+            # self.enc_output = nn.Linear(d_model, d_model)
+            # self.enc_output_norm = nn.LayerNorm(d_model)
             self.pos_trans = nn.Linear(d_model * 2, d_model * 2)
             self.pos_trans_norm = nn.LayerNorm(d_model * 2)
         else:
             self.reference_points = nn.Linear(d_model, 2)
 
         self._reset_parameters()
+        self.fusion_linear = nn.Linear(d_model * 4, d_model)
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -127,7 +130,58 @@ class DeformableTransformer(nn.Module):
         valid_ratio = torch.stack([valid_ratio_w, valid_ratio_h], -1)
         return valid_ratio
 
-    def forward(self, srcs, masks, pos_embeds, query_embed=None, **kwargs):
+    def get_roi_feature(self, memory, roi_box, spatial_shapes, valid_ratios, memory_padding_mask):
+        """
+        extra roi corresponding feature from all level feature maps.
+
+        args: 
+            memory: Tensor (bs,  num_tokens_all_lvls, c) 
+                feature from encoder output
+
+            roi_box: Tensor (bs, num_queries, 4)
+                c_x, c_y, w, h box coordiantes. 
+
+            valid_ratios: Tensor (bs, num_level, 2)
+                Valid ratio for each level feature map. Invalid feature is due to padding operation.
+        """
+        
+        n_lvls = len(spatial_shapes)
+        bs, _, c = memory.shape
+        # mask padding feature
+
+        memory = memory.masked_fill(memory_padding_mask.unsqueeze(-1), float(0))
+        tokens_per_lvl = spatial_shapes.prod(-1).unbind()
+        feat_list = memory.split(tokens_per_lvl, dim=1)
+        
+        # transform from cxcywh to xyxy
+        roi_box = box_ops.box_cxcywh_to_xyxy(roi_box)
+        
+        # limit roi box
+        roi_box = roi_box.clamp(0.01, 0.99)
+        
+        # tranform from normalized real size to normalized padding size 
+        roi_box = roi_box[:, :, None] \
+                    * torch.cat([valid_ratios, valid_ratios], dim=-1)[:, None]
+        
+        multi_lvl_roi_feat = [] 
+        for lvl in range(n_lvls):
+            feat = feat_list[lvl]
+            h, w = spatial_shapes[lvl]
+            feat = feat.reshape(bs, h, w, c).permute(0, 3, 1, 2)
+            lvl_roi = roi_box[:, :, lvl] * torch.tensor([w, h, w, h], dtype=torch.float32, device=roi_box.device)
+            roi_feature = torchvision.ops.roi_align(
+                feat,
+                list(torch.unbind(lvl_roi, dim=0)),
+                output_size=(7, 7),
+                spatial_scale=1.0,
+                aligned=True)  # (bs * num_queries, c, 7, 7)
+            roi_feature = roi_feature.mean(dim=(-1, -2)).reshape(bs, -1, c)
+            multi_lvl_roi_feat.append(roi_feature)
+        multi_lvl_roi_feat = torch.cat(multi_lvl_roi_feat, dim=-1)
+        multi_lvl_roi_feat = self.fusion_linear(multi_lvl_roi_feat)
+        return multi_lvl_roi_feat
+
+    def forward(self, srcs, masks, pos_embeds, query_embed=None, dynamic_anchor_embed=None, **kwargs):
         assert self.two_stage or query_embed is not None
 
         # prepare input for encoder
@@ -158,8 +212,12 @@ class DeformableTransformer(nn.Module):
 
         # prepare input for decoder
         bs, _, c = memory.shape
+        assert self.two_stage
         if self.two_stage:
-            output_memory, output_proposals = self.gen_encoder_output_proposals(memory, mask_flatten, spatial_shapes)
+            # output_memory, output_proposals = self.gen_encoder_output_proposals(memory, mask_flatten, spatial_shapes)
+            dynamic_anchor_embed = dynamic_anchor_embed.unsqueeze(0).expand(bs, -1, -1)
+            output_memory = self.get_roi_feature(memory, dynamic_anchor_embed.sigmoid(), spatial_shapes, valid_ratios, mask_flatten)
+            output_proposals = dynamic_anchor_embed
 
             # hack implementation for two-stage Deformable DETR
             enc_outputs_class = self.decoder.class_embed[self.decoder.num_layers](output_memory)
