@@ -8,7 +8,7 @@ batch_size=4
 device_code=3090x8_1
 backbone=resnet18
 num_queries=300
-branch=two_stage_variant_v1.1
+branch=two_stage_variant_v1.2
 
 exp_code=${branch}_shortersize_480-${device_code}_${dataset}-msdetr_${backbone}_enc${num_enc_layers}_dec${num_dec_layers}_query${num_queries}-bs${batch_size}x${num_gpus}
 EXP_DIR=exps/${exp_code}

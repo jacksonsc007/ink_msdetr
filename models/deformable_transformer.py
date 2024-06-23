@@ -76,6 +76,24 @@ class DeformableTransformer(nn.Module):
             pooler_type=pooler_type,
         )
         self.fusion_linear = nn.Linear(d_model * pooler_resolution * pooler_resolution, d_model)
+        
+        self.extra_self_attn = nn.MultiheadAttention(d_model, nhead, dropout)
+        self.norm1 = nn.LayerNorm(d_model)
+        # extra ffn
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.activation = _get_activation_fn(activation)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+
+        # extra postional embedding
+        self.extra_pos_trans = nn.Linear(2 * d_model, d_model)
+        self.extra_pos_trans_norm = nn.LayerNorm(d_model)
+        
+    def forward_ffn(self, src):
+        src2 = self.linear2(self.activation(self.linear1(src)))
+        src = src + src2
+        src = self.norm2(src)
+        return src
 
 
     def _reset_parameters(self):
@@ -228,6 +246,21 @@ class DeformableTransformer(nn.Module):
             # output_memory, output_proposals = self.gen_encoder_output_proposals(memory, mask_flatten, spatial_shapes)
             dynamic_anchor_embed = dynamic_anchor_embed.unsqueeze(0).expand(bs, -1, -1)
             output_memory = self.get_roi_feature(memory, dynamic_anchor_embed.sigmoid(), spatial_shapes, valid_ratios, mask_flatten)
+
+            """Apply self-attention on roi feature, as one2one matching are use for encoder output proposal."""
+            output_pos_embed = self.extra_pos_trans_norm( self.extra_pos_trans(
+                self.get_proposal_pos_embed(dynamic_anchor_embed.detach())
+            ))
+            # tgt2 = self.self_attn(q.transpose(0, 1), k.transpose(0, 1), tgt.transpose(0, 1))[0].transpose(0, 1)
+            output_memory_ = self.extra_self_attn(
+                (output_memory + output_pos_embed).transpose(0, 1),
+                (output_memory + output_pos_embed).transpose(0, 1),
+                (output_memory ).transpose(0, 1),
+            )[0].transpose(0, 1)
+            
+            output_memory = self.norm1(output_memory + output_memory_)
+            output_memory = self.forward_ffn(output_memory)
+            
             output_proposals = dynamic_anchor_embed
 
             # hack implementation for two-stage Deformable DETR
