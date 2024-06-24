@@ -109,3 +109,8 @@ First attempt on feature level specific sampling. Tokens of the last feature lev
 
 # v7
 In previous version, attn map are generated based on previous layer's output. In this version, we use the output of the current layer to generate the attn map.
+
+
+
+# v7.1
+Based on <hybrid_cascade v3.0>
