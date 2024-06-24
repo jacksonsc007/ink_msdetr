@@ -103,3 +103,9 @@ Use addition form.
 
 ## v6.3
 First attempt on feature level specific sampling. Tokens of the last feature level will always be kept.
+
+
+
+
+# v7
+In previous version, attn map are generated based on previous layer's output. In this version, we use the output of the current layer to generate the attn map.
