@@ -114,3 +114,7 @@ In previous version, attn map are generated based on previous layer's output. In
 
 # v7.1
 Based on <hybrid_cascade v3.0>
+
+
+# v7.2
+Do not apply sparse token for the first encoder layer.
