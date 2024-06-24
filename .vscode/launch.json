@@ -1,0 +1,45 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "msdetr",
+            "type": "python",
+            "request": "launch",
+            "program": "main.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "cwd":"/root/workspace/MS-DETR",
+            "env": {"code_version":"debug"},
+            "args": [
+                    "--lr", "5e-5",
+                    "--lr_backbone", "5e-6",
+                    // "--backbone", "resnet50",
+                    "--backbone", "resnet18",
+                    "--batch_size", "4",
+                    "--enc_layers", "6",
+                    "--dec_layers", "6",
+                    "--output_dir", "output",
+                    "--with_box_refine", 
+                    // "--two_stage", 
+                    "--dim_feedforward", "2048",
+                    "--epochs", "12",
+                    "--lr_drop", "11",
+                    "--num_queries", "300",
+                    "--dropout", "0.0",
+                    "--mixed_selection", 
+                    "--look_forward_twice", 
+                    "--use_ms_detr", 
+                    "--use_aux_ffn", 
+                    "--cls_loss_coef", "1",
+                    "--o2m_cls_loss_coef", "2",
+                    "--enc_cls_loss_coef", "2",
+                    "--enc_bbox_loss_coef", "5",
+                    "--enc_giou_loss_coef", "2",
+                 ],
+        }
+    ]
+
+}

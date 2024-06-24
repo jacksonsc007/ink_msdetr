@@ -17,7 +17,7 @@ from torch import nn, Tensor
 from torch.nn.init import xavier_uniform_, constant_, uniform_, normal_
 
 from util.misc import inverse_sigmoid
-from models.ops.modules import MSDeformAttn, MultiScaleSampler
+from models.ops.modules import MSDeformAttn
 # from config import *
 
 
@@ -59,17 +59,9 @@ class DeformableTransformer(nn.Module):
 
         self._reset_parameters()
 
-        assert num_encoder_layers == num_decoder_layers
+        self.num_detection_stages = len( self.encoder.layers )
+        assert self.num_detection_stages == len( self.decoder.layers )
 
-        self.multi_scale_sampler = MultiScaleSampler(
-            d_model,
-            num_feature_levels,
-            1,
-            1,
-            dim_feedforward,
-            dropout,
-            activation
-        )
     def _reset_parameters(self):
         for p in self.parameters():
             if p.dim() > 1:
@@ -200,7 +192,6 @@ class DeformableTransformer(nn.Module):
         enc_padding_mask = mask_flatten
         enc_reference_points = self.encoder.get_reference_points(spatial_shapes, valid_ratios, device=src_flatten.device)
 
-        memory = self.multi_scale_sampler(memory, enc_reference_points, spatial_shapes, level_start_index, enc_padding_mask)
         """
         initialize decoder queries
         """
@@ -238,21 +229,25 @@ class DeformableTransformer(nn.Module):
         init_dec_tgt = tgt
         dec_query_pos = query_embed
         init_dec_reference_points = reference_points
-        dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref= \
-            self.decoder.cascade_stage_forward(0, init_dec_tgt, init_dec_reference_points, memory,
-                spatial_shapes, level_start_index, valid_ratios, dec_query_pos, enc_padding_mask, **kwargs)
 
-        hs_o2o.append(dec_query_o2o)
-        hs_o2m.append(dec_query_o2m)
-        inter_references.append(dec_new_ref if self.decoder.look_forward_twice else dec_ref)
+        # dec_query_o2o, dec_query_o2m, dec_ref, dec_new_ref= \
+        #     self.decoder.cascade_stage_forward(0, init_dec_tgt, init_dec_reference_points, memory,
+        #         spatial_shapes, level_start_index, valid_ratios, dec_query_pos, enc_padding_mask, **kwargs)
+
+        # hs_o2o.append(dec_query_o2o)
+        # hs_o2m.append(dec_query_o2m)
+        # inter_references.append(dec_new_ref if self.decoder.look_forward_twice else dec_ref)
 
         combinations = ( 
-             (0, 0, 1, 1), 
-             (1, 1, 2, 2), 
-             (2, 2, 3, 3), 
-             (3, 3, 4, 4),
-             (4, 5, 5, 5)
+             (0, 0, 0, 0), 
+             (1, 1, 1, 1), 
+             (2, 2, 2, 2), 
+             (3, 3, 3, 3),
+             (4, 4, 4, 4),
+             (5, 5, 5, 5)
         )
+        dec_query_o2o = init_dec_tgt
+        dec_ref = init_dec_reference_points
         for enc_start_layer_idx, enc_end_layer_idx, dec_start_layer_idx, dec_end_layer_idx in  combinations:
             memory = self.encoder(enc_start_layer_idx, enc_end_layer_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
 
