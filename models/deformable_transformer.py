@@ -202,12 +202,12 @@ class DeformableTransformer(nn.Module):
         init_dec_reference_points = reference_points
 
         combinations = ( 
-             (0, 1, 0, 1), 
-             (1, 2, 1, 2), 
-             (2, 3, 2, 3), 
-             (3, 4, 3, 4),
-             (4, 5, 4, 5),
-             (5, 6, 5, 6)
+             (0, 0, 0, 1), 
+             (0, 1, 1, 2), 
+             (1, 2, 2, 3), 
+             (2, 3, 3, 4), 
+             (3, 4, 4, 5),
+             (4, 6, 5, 6)
         )
         dec_query_o2o = init_dec_tgt
         dec_ref = init_dec_reference_points
@@ -235,7 +235,7 @@ class DeformableTransformer(nn.Module):
                 memory = self.encoder(enc_start_idx, enc_end_idx, enc_reference_points, memory, spatial_shapes, level_start_index, valid_ratios, 
                                       lvl_pos_embed_flatten, mask_flatten, topk_enc_token_indice, valid_enc_token_num)
             else:
-                memory = self.encoder.cascade_stage_forward(enc_start_idx, memory, memory, spatial_shapes, level_start_index, enc_reference_points, lvl_pos_embed_flatten, mask_flatten)
+                memory = memory
 
             hs_o2o_, hs_o2m_, inter_references_, _, _ = self.decoder(dec_start_idx, dec_end_idx, dec_query_o2o, dec_ref, memory,
                                                 spatial_shapes, level_start_index, valid_ratios, dec_query_pos, mask_flatten, **kwargs)

@@ -118,3 +118,7 @@ Based on <hybrid_cascade v3.0>
 
 # v7.2
 Do not apply sparse token for the first encoder layer.
+
+
+# v7.3
+Based on <hybrid_cascade v1.7>
