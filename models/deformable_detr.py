@@ -130,7 +130,7 @@ class DeformableDETR(nn.Module):
             for box_embed in self.bbox_embed:
                 nn.init.constant_(box_embed.layers[-1].bias.data[2:], 0.0)
 
-    def forward(self, samples: NestedTensor, target):
+    def forward(self, samples: NestedTensor):
         """The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -145,18 +145,6 @@ class DeformableDETR(nn.Module):
                - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
                                 dictionnaries containing the two above keys for each decoder layer.
         """
-        bs = len(target)
-        real_imgsize_whwh = []
-        for b_id in range(bs):
-           real_size_hw = target[b_id]['size']
-           h, w = real_size_hw.unbind()
-           real_imgsize_whwh.append(
-               torch.tensor([w, h, w, h], dtype=real_size_hw.dtype, device=real_size_hw.device)
-           )
-        real_imgsize_whwh = torch.stack(real_imgsize_whwh)
-        # hack implementation
-        self.transformer.real_imgsize_whwh = real_imgsize_whwh
-
         if not isinstance(samples, NestedTensor):
             samples = nested_tensor_from_tensor_list(samples)
         features, pos = self.backbone(samples)
@@ -506,11 +494,11 @@ class SetCriterion(nn.Module):
                 bt['labels'] = torch.zeros_like(bt['labels'])
 
             # NOTE: this is a hack to use anchors for encoder matching, after matching we need to restore pred_boxes for computing loss
-            if self.use_anchors_enc_match:
-                enc_outputs['pred_boxes'], enc_outputs['anchors'] = enc_outputs['anchors'], enc_outputs['pred_boxes']
+            # if self.use_anchors_enc_match:
+            #     enc_outputs['pred_boxes'], enc_outputs['anchors'] = enc_outputs['anchors'], enc_outputs['pred_boxes']
             indices = self.enc_matcher(enc_outputs, bin_targets)
-            if self.use_anchors_enc_match:
-                enc_outputs['pred_boxes'], enc_outputs['anchors'] = enc_outputs['anchors'], enc_outputs['pred_boxes']
+            # if self.use_anchors_enc_match:
+            #     enc_outputs['pred_boxes'], enc_outputs['anchors'] = enc_outputs['anchors'], enc_outputs['pred_boxes']
 
             for loss in self.losses:
                 if loss == 'masks':

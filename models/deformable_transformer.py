@@ -22,10 +22,6 @@ import torchvision
 from util import box_ops
 # from config import *
 
-from detectron2.modeling.poolers import ROIPooler, cat
-from detectron2.structures import Boxes
-
-
 
 class DeformableTransformer(nn.Module):
     def __init__(self, d_model=256, nhead=8,
@@ -57,44 +53,15 @@ class DeformableTransformer(nn.Module):
 
         if two_stage:
             # self.enc_output = nn.Linear(d_model, d_model)
-            self.enc_output_norm = nn.LayerNorm(d_model)
+            # self.enc_output_norm = nn.LayerNorm(d_model)
             self.pos_trans = nn.Linear(d_model * 2, d_model * 2)
             self.pos_trans_norm = nn.LayerNorm(d_model * 2)
         else:
             self.reference_points = nn.Linear(d_model, 2)
 
         self._reset_parameters()
-        
-        pooler_resolution = 7
-        pooler_scales = (1/4, 1/8, 1/16, 1/32)
-        sampling_ratio = 2
-        pooler_type = "ROIAlignV2"
-        self.pooler = ROIPooler(
-            output_size=pooler_resolution,
-            scales=pooler_scales,
-            sampling_ratio=sampling_ratio,
-            pooler_type=pooler_type,
-        )
-        self.fusion_linear = nn.Linear(d_model * pooler_resolution * pooler_resolution, d_model)
-        
-        self.extra_self_attn = nn.MultiheadAttention(d_model, nhead, dropout)
-        self.norm1 = nn.LayerNorm(d_model)
-        # extra ffn
-        self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.activation = _get_activation_fn(activation)
-        self.linear2 = nn.Linear(dim_feedforward, d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-
-        # extra postional embedding
-        self.extra_pos_trans = nn.Linear(2 * d_model, d_model)
-        self.extra_pos_trans_norm = nn.LayerNorm(d_model)
-        
-    def forward_ffn(self, src):
-        src2 = self.linear2(self.activation(self.linear1(src)))
-        src = src + src2
-        src = self.norm2(src)
-        return src
-
+        self.fusion_linear = nn.Linear(d_model * 4, d_model)
+        self.fusion_norm = nn.LayerNorm(d_model)
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -181,34 +148,40 @@ class DeformableTransformer(nn.Module):
         
         n_lvls = len(spatial_shapes)
         bs, _, c = memory.shape
-        num_box = roi_box.shape[1]
         # mask padding feature
 
         memory = memory.masked_fill(memory_padding_mask.unsqueeze(-1), float(0))
         tokens_per_lvl = spatial_shapes.prod(-1).unbind()
-        feat_list = list(memory.split(tokens_per_lvl, dim=1))
-        feat_list_2d = []
-        for i in range(n_lvls):
-            h, w = spatial_shapes[i]
-            feat_list_2d.append(feat_list[i].reshape(bs, h, w, c).permute(0, 3, 1, 2))
+        feat_list = memory.split(tokens_per_lvl, dim=1)
         
         # transform from cxcywh to xyxy
         roi_box = box_ops.box_cxcywh_to_xyxy(roi_box)
         
-        # limit roi box
-        roi_box = roi_box.clamp(0.01, 0.99)
+        """clamp is not used. As invalid feature as masked. Besides, out-of-range location will be treated as value 0 by roi_align"""
+        # roi_box = roi_box.clamp(0.01, 0.99) 
         
-        # from nomalized value to real pixel value
-        roi_box = roi_box * self.real_imgsize_whwh[:, None]
-                    
-        roi_box_input = list()
-        for i in range(bs):
-            roi_box_input.append(Boxes(roi_box[i]))
-        roi_feature = self.pooler(feat_list_2d, roi_box_input)
-        roi_feature = roi_feature.flatten(1)
-        roi_feature = self.fusion_linear(roi_feature).reshape(bs, num_box, c)
-        roi_feature = self.enc_output_norm(roi_feature)
-        return roi_feature
+        # tranform from normalized real size to normalized padding size 
+        roi_box = roi_box[:, :, None] \
+                    * torch.cat([valid_ratios, valid_ratios], dim=-1)[:, None]
+        
+        multi_lvl_roi_feat = [] 
+        for lvl in range(n_lvls):
+            feat = feat_list[lvl]
+            h, w = spatial_shapes[lvl]
+            feat = feat.reshape(bs, h, w, c).permute(0, 3, 1, 2)
+            lvl_roi = roi_box[:, :, lvl] * torch.tensor([w, h, w, h], dtype=torch.float32, device=roi_box.device)
+            roi_feature = torchvision.ops.roi_align(
+                feat,
+                list(torch.unbind(lvl_roi, dim=0)),
+                output_size=(7, 7),
+                spatial_scale=1.0,
+                aligned=True)  # (bs * num_queries, c, 7, 7)
+            roi_feature = roi_feature.mean(dim=(-1, -2)).reshape(bs, -1, c)
+            multi_lvl_roi_feat.append(roi_feature)
+        multi_lvl_roi_feat = torch.cat(multi_lvl_roi_feat, dim=-1)
+        multi_lvl_roi_feat = self.fusion_linear(multi_lvl_roi_feat)
+        multi_lvl_roi_feat = self.fusion_norm(multi_lvl_roi_feat)
+        return multi_lvl_roi_feat
 
     def forward(self, srcs, masks, pos_embeds, query_embed=None, dynamic_anchor_embed=None, **kwargs):
         assert self.two_stage or query_embed is not None
@@ -246,21 +219,6 @@ class DeformableTransformer(nn.Module):
             # output_memory, output_proposals = self.gen_encoder_output_proposals(memory, mask_flatten, spatial_shapes)
             dynamic_anchor_embed = dynamic_anchor_embed.unsqueeze(0).expand(bs, -1, -1)
             output_memory = self.get_roi_feature(memory, dynamic_anchor_embed.sigmoid(), spatial_shapes, valid_ratios, mask_flatten)
-
-            """Apply self-attention on roi feature, as one2one matching are use for encoder output proposal."""
-            output_pos_embed = self.extra_pos_trans_norm( self.extra_pos_trans(
-                self.get_proposal_pos_embed(dynamic_anchor_embed.detach())
-            ))
-            # tgt2 = self.self_attn(q.transpose(0, 1), k.transpose(0, 1), tgt.transpose(0, 1))[0].transpose(0, 1)
-            output_memory_ = self.extra_self_attn(
-                (output_memory + output_pos_embed).transpose(0, 1),
-                (output_memory + output_pos_embed).transpose(0, 1),
-                (output_memory ).transpose(0, 1),
-            )[0].transpose(0, 1)
-            
-            output_memory = self.norm1(output_memory + output_memory_)
-            output_memory = self.forward_ffn(output_memory)
-            
             output_proposals = dynamic_anchor_embed
 
             # hack implementation for two-stage Deformable DETR
