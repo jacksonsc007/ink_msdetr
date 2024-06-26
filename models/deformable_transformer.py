@@ -226,7 +226,10 @@ class DeformableTransformer(nn.Module):
             enc_outputs_coord_unact = self.decoder.bbox_embed[self.decoder.num_layers](output_memory) + output_proposals
 
             topk = self.two_stage_num_proposals
-            topk_proposals = torch.topk(enc_outputs_class[..., 0], topk, dim=1)[1]
+            # reshape (bs, 300, 91) -> (bs, 300 * 91)
+            # -> (bs, 300)
+            topk_proposals = torch.topk(enc_outputs_class.flatten(1), topk, dim=1)[1]
+            topk_proposals = topk_proposals // enc_outputs_class.shape[2]
             topk_coords_unact = torch.gather(enc_outputs_coord_unact, 1, topk_proposals.unsqueeze(-1).repeat(1, 1, 4))
             topk_coords_unact = topk_coords_unact.detach()
             reference_points = topk_coords_unact.sigmoid()

@@ -490,8 +490,8 @@ class SetCriterion(nn.Module):
         if 'enc_outputs' in outputs:
             enc_outputs = outputs['enc_outputs']
             bin_targets = copy.deepcopy(targets)
-            for bt in bin_targets:
-                bt['labels'] = torch.zeros_like(bt['labels'])
+            # for bt in bin_targets:
+                # bt['labels'] = torch.zeros_like(bt['labels'])
 
             # NOTE: this is a hack to use anchors for encoder matching, after matching we need to restore pred_boxes for computing loss
             # if self.use_anchors_enc_match:

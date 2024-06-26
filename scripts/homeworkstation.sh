@@ -1,14 +1,14 @@
 set -e
 coco_path=data/coco
-num_gpus=4
+num_gpus=1
 num_enc_layers=6
 num_dec_layers=6
 dataset=minicoco
-batch_size=4
-device_code=3090x8_1
+batch_size=2
+device_code=homeworkstation
 backbone=resnet18
 num_queries=300
-branch=two_stage_variant_v1.0.3
+branch=two_stage_variant_v1.0
 
 exp_code=${branch}_shortersize_480-${device_code}_${dataset}-msdetr_${backbone}_enc${num_enc_layers}_dec${num_dec_layers}_query${num_queries}-bs${batch_size}x${num_gpus}
 EXP_DIR=exps/${exp_code}
@@ -17,6 +17,8 @@ mkdir -p $EXP_DIR
 
 GPUS_PER_NODE=$num_gpus ./tools/run_dist_launch.sh $num_gpus python -u main.py \
    --backbone $backbone \
+   --lr 2.5e-5 \
+   --lr_backbone 2.5e-6 \
    --batch_size $batch_size \
    --wandb_name ${exp_code} \
    --wandb_enabled \
