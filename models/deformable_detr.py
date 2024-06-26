@@ -646,7 +646,7 @@ def build(args):
         model = DeformableDETRsegm(model, freeze_detr=(args.frozen_weights is not None))
 
     matcher = build_matcher(args)
-    enc_matcher = HungarianMatcher(cost_class=0, cost_bbox=args.set_cost_bbox, cost_giou=args.set_cost_giou)
+    enc_matcher = HungarianMatcher(cost_class=args.set_cost_bbox, cost_bbox=args.set_cost_bbox, cost_giou=args.set_cost_giou)
 
     weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_bbox': args.bbox_loss_coef, 'loss_giou': args.giou_loss_coef}
     weight_dict.update(
