@@ -18,6 +18,7 @@ from torch.nn.init import xavier_uniform_, constant_, uniform_, normal_
 
 from util.misc import inverse_sigmoid
 from models.ops.modules import MSDeformAttn
+from util import box_ops
 # from config import *
 
 
@@ -189,12 +190,12 @@ class DeformableTransformer(nn.Module):
             init_reference_out = reference_points
 
         # decoder
-        hs_o2o, hs_o2m, inter_references = self.decoder(tgt, reference_points, memory,
+        hs_o2o, hs_o2m, inter_references, rep_boxes = self.decoder(tgt, reference_points, memory,
                                             spatial_shapes, level_start_index, valid_ratios, query_embed, mask_flatten, **kwargs)
 
         inter_references_out = inter_references
         if self.two_stage:
-            return hs_o2o, hs_o2m, init_reference_out, inter_references_out, enc_outputs_class, enc_outputs_coord_unact, output_proposals.sigmoid(),
+            return hs_o2o, hs_o2m, init_reference_out, inter_references_out, enc_outputs_class, enc_outputs_coord_unact, output_proposals.sigmoid(), rep_boxes
         return hs_o2o, hs_o2m, init_reference_out, inter_references_out, None, None, None,
 
 
@@ -230,7 +231,7 @@ class DeformableTransformerEncoderLayer(nn.Module):
 
     def forward(self, src, pos, reference_points, spatial_shapes, level_start_index, padding_mask=None):
         # self attention
-        src2 = self.self_attn(self.with_pos_embed(src, pos), reference_points, src, spatial_shapes, level_start_index, padding_mask)
+        src2, _ = self.self_attn(self.with_pos_embed(src, pos), reference_points, src, spatial_shapes, level_start_index, padding_mask)
         src = src + self.dropout1(src2)
         src = self.norm1(src)
 
@@ -324,7 +325,7 @@ class DeformableTransformerDecoderLayer(nn.Module):
     def forward(self, tgt, query_pos, reference_points, src, src_spatial_shapes, level_start_index, src_padding_mask=None):
         if self.use_ms_detr:
             # cross attention
-            tgt2 = self.cross_attn(self.with_pos_embed(tgt, query_pos),
+            tgt2, sampling_locations = self.cross_attn(self.with_pos_embed(tgt, query_pos),
                                    reference_points, src, src_spatial_shapes, level_start_index, src_padding_mask)
             tgt = tgt + self.dropout1(tgt2)
             tgt = self.norm1(tgt)
@@ -360,7 +361,7 @@ class DeformableTransformerDecoderLayer(nn.Module):
             # ffn
             tgt_o2o = tgt_o2m = self.forward_ffn(tgt)
         
-        return tgt_o2o, tgt_o2m
+        return tgt_o2o, tgt_o2m, sampling_locations
 
 
 class DeformableTransformerDecoder(nn.Module):
@@ -375,6 +376,31 @@ class DeformableTransformerDecoder(nn.Module):
         self.look_forward_twice = look_forward_twice
         self.use_ms_detr = use_ms_detr
 
+    def points2box(self, points, valid_ratios):
+        """
+        Convert representative points to boxes.
+        args:
+            points: Tensor of shape (bs, num_queries, n_heads, n_lvls, n_points, 2)
+                The value is normalized with repect to padded image size.
+
+            valid_ratios: Tensor of shape (bs, n_lvls, 2)
+                convert coordinates between padded image and real image
+        """
+        # convert form padded image coordinates to real image coordinates
+        points = points / valid_ratios[:, None, None, :, None, :]
+        bs, num_queries, n_heads, n_lvls, n_points, _ = points.shape
+        points = points.reshape(bs, num_queries, -1, 2)
+        points_x, points_y = points.unbind(-1)
+        lx = points_x.min(dim=2)[0]
+        rx = points_x.max(dim=2)[0]
+        ly = points_y.min(dim=2)[0]
+        ry = points_y.max(dim=2)[0]
+        box = torch.stack([lx, ly, rx, ry], dim=-1)
+        box = box_ops.box_xyxy_to_cxcywh(box)
+        return box
+        
+
+
     def forward(self, tgt, reference_points, src, src_spatial_shapes, src_level_start_index, src_valid_ratios,
                 query_pos=None, src_padding_mask=None, **kwargs):
         output = tgt
@@ -382,6 +408,7 @@ class DeformableTransformerDecoder(nn.Module):
         intermediate = []
         intermediate_o2m = []
         intermediate_reference_points = []
+        rep_boxes = []
         for lid, layer in enumerate(self.layers):
             if reference_points.shape[-1] == 4:
                 reference_points_input = reference_points[:, :, None] \
@@ -389,7 +416,10 @@ class DeformableTransformerDecoder(nn.Module):
             else:
                 assert reference_points.shape[-1] == 2
                 reference_points_input = reference_points[:, :, None] * src_valid_ratios[:, None]
-            output, output_o2m = layer(output, query_pos, reference_points_input, src, src_spatial_shapes, src_level_start_index, src_padding_mask, **kwargs)
+            output, output_o2m, rep_points = layer(output, query_pos, reference_points_input, src, src_spatial_shapes, src_level_start_index, src_padding_mask, **kwargs)
+            
+            # rep_points: (bs, num_queries, n_heads, n_lvls, n_points, 2)
+            rep_box = self.points2box(rep_points, src_valid_ratios)
 
             # hack implementation for iterative bounding box refinement
             if self.bbox_embed is not None:
@@ -412,9 +442,10 @@ class DeformableTransformerDecoder(nn.Module):
                     if self.look_forward_twice
                     else reference_points
                 )
+            rep_boxes.append(rep_box)
 
         if self.return_intermediate:
-            return torch.stack(intermediate), torch.stack(intermediate_o2m), torch.stack(intermediate_reference_points)
+            return torch.stack(intermediate), torch.stack(intermediate_o2m), torch.stack(intermediate_reference_points), torch.stack(rep_boxes)
 
         return output, output_o2m, reference_points
 

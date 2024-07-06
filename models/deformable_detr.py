@@ -166,7 +166,7 @@ class DeformableDETR(nn.Module):
         if not self.two_stage or self.mixed_selection:
             query_embeds = self.query_embed.weight
 
-        hs, hs_o2m, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, anchors = self.transformer(srcs, masks, pos, query_embeds)
+        hs, hs_o2m, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, anchors, rep_boxes = self.transformer(srcs, masks, pos, query_embeds)
 
         outputs_classes = []
         outputs_coords = []
@@ -189,9 +189,9 @@ class DeformableDETR(nn.Module):
         outputs_class = torch.stack(outputs_classes)
         outputs_coord = torch.stack(outputs_coords)
 
-        out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
+        out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1], 'rep_boxes': rep_boxes[-1]}
         if self.aux_loss:
-            out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
+            out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord, rep_boxes)
 
         if self.use_ms_detr:
             outputs_classes_o2m = []
@@ -225,12 +225,17 @@ class DeformableDETR(nn.Module):
         return out
 
     @torch.jit.unused
-    def _set_aux_loss(self, outputs_class, outputs_coord):
+    def _set_aux_loss(self, outputs_class, outputs_coord, rep_boxes=None):
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
-        return [{'pred_logits': a, 'pred_boxes': b}
-                for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
+        if rep_boxes is None:
+            return [{'pred_logits': a, 'pred_boxes': b}
+                    for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
+        else:
+            return [{'pred_logits': a, 'pred_boxes': b, 'rep_boxes': c}
+                    for a, b, c in zip(outputs_class[:-1], outputs_coord[:-1], rep_boxes[:-1])]
+            
 
 
 class SetCriterion(nn.Module):
@@ -324,6 +329,16 @@ class SetCriterion(nn.Module):
             box_ops.box_cxcywh_to_xyxy(src_boxes),
             box_ops.box_cxcywh_to_xyxy(target_boxes)))
         losses['loss_giou'] = loss_giou.sum() / num_boxes
+        if 'rep_boxes' in outputs:
+            src_boxes = outputs['rep_boxes'][idx]
+            loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction='none')
+            losses['loss_bbox_rep'] = loss_bbox.sum() / num_boxes
+
+            loss_giou = 1 - torch.diag(box_ops.generalized_box_iou(
+                box_ops.box_cxcywh_to_xyxy(src_boxes),
+                box_ops.box_cxcywh_to_xyxy(target_boxes)))
+            losses['loss_giou_rep'] = loss_giou.sum() / num_boxes
+
         return losses
 
     def loss_masks(self, outputs, targets, indices, num_boxes):
@@ -643,6 +658,11 @@ def build(args):
     weight_dict.update(
         {'loss_ce_enc': args.enc_cls_loss_coef, 'loss_bbox_enc': args.enc_bbox_loss_coef, 'loss_giou_enc': args.enc_giou_loss_coef}
     )
+    # add weight for rep boxes
+    weight_dict.update(
+        {'loss_ce_rep': args.cls_loss_coef, 'loss_bbox_rep': args.bbox_loss_coef, 'loss_giou_rep': args.giou_loss_coef}
+    )
+
     if args.masks:
         weight_dict["loss_mask"] = args.mask_loss_coef
         weight_dict["loss_dice"] = args.dice_loss_coef
