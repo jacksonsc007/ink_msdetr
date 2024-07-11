@@ -38,6 +38,12 @@
                     "--enc_cls_loss_coef", "2",
                     "--enc_bbox_loss_coef", "5",
                     "--enc_giou_loss_coef", "2",
+
+                    // eval
+                    // "--topk_eval",  "300",
+                    // "--resume", "exps/reppoint_v1.1-shortersize_480-homeworkstation-minicoco-msdetr_baseline-resnet18_enc6_dec6_query300-bs2x1_lr1e-4/checkpoint.pth",
+                    // "--eval"
+                 
                  ],
         }
     ]

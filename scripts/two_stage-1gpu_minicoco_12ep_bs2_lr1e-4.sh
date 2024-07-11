@@ -8,13 +8,13 @@ batch_size=2
 device_code=homeworkstation
 backbone=resnet18
 num_queries=300
-branch=reppoint_v1.0
+branch=reppoint_v1.1
 
 exp_code=${branch}-shortersize_480-${device_code}-${dataset}-msdetr_baseline-${backbone}_enc${num_enc_layers}_dec${num_dec_layers}_query${num_queries}-bs${batch_size}x${num_gpus}_lr1e-4
 EXP_DIR=exps/${exp_code}
 
 # copy model code to output dir
-cp -r ../models $EXP_DIR
+cp -r models $EXP_DIR
 
 mkdir -p $EXP_DIR
 

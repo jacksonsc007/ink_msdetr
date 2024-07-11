@@ -31,6 +31,8 @@ from .segmentation import (DETRsegm, PostProcessPanoptic, PostProcessSegm,
 from .deformable_transformer import build_deforamble_transformer
 
 from .matcher_o2m import Stage2Assigner
+from .misc import points2box
+
 
 
 def _get_clones(module, N):
@@ -57,7 +59,9 @@ class DeformableDETR(nn.Module):
         self.transformer = transformer
         hidden_dim = transformer.d_model
         self.class_embed = nn.Linear(hidden_dim, num_classes)
-        self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
+        
+        self.num_reppoints = self.transformer.num_reppoints
+        self.bbox_embed = MLP(hidden_dim, hidden_dim, self.num_reppoints * 2, 3)
         self.num_feature_levels = num_feature_levels
         self.mixed_selection = mixed_selection
         self.use_ms_detr = use_ms_detr
@@ -104,7 +108,8 @@ class DeformableDETR(nn.Module):
             nn.init.constant_(proj[0].bias, 0)
 
         # if two-stage, the last class_embed and bbox_embed is for region proposal generation
-        num_pred = (transformer.decoder.num_layers + 1) if two_stage else transformer.decoder.num_layers
+        # num_pred = (transformer.decoder.num_layers + 1) if two_stage else transformer.decoder.num_layers
+        num_pred = transformer.decoder.num_layers
         if with_box_refine:
             self.class_embed = _get_clones(self.class_embed, num_pred)
             self.bbox_embed = _get_clones(self.bbox_embed, num_pred)
@@ -121,6 +126,13 @@ class DeformableDETR(nn.Module):
             self.transformer.decoder.class_embed = self.class_embed
             for box_embed in self.bbox_embed:
                 nn.init.constant_(box_embed.layers[-1].bias.data[2:], 0.0)
+
+            self.enc_class_embed = copy.deepcopy(self.class_embed[0])
+            self.enc_bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
+            nn.init.constant_(self.enc_bbox_embed.layers[-1].bias.data, 0.0)
+            nn.init.constant_(self.enc_bbox_embed.layers[-1].weight.data, 0.0)
+            self.transformer.enc_class_embed = self.enc_class_embed
+            self.transformer.enc_bbox_embed = self.enc_bbox_embed
 
     def forward(self, samples: NestedTensor):
         """The forward expects a NestedTensor, which consists of:
@@ -166,7 +178,7 @@ class DeformableDETR(nn.Module):
         if not self.two_stage or self.mixed_selection:
             query_embeds = self.query_embed.weight
 
-        hs, hs_o2m, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, anchors, rep_boxes = self.transformer(srcs, masks, pos, query_embeds)
+        hs, hs_o2m, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, anchors, rep_boxes, rep_points = self.transformer(srcs, masks, pos, query_embeds)
 
         outputs_classes = []
         outputs_coords = []
@@ -175,15 +187,16 @@ class DeformableDETR(nn.Module):
                 reference = init_reference
             else:
                 reference = inter_references[lvl - 1]
-            reference = inverse_sigmoid(reference)
             outputs_class = self.class_embed[lvl](hs[lvl])
             tmp = self.bbox_embed[lvl](hs[lvl])
-            if reference.shape[-1] == 4:
-                tmp += reference
-            else:
-                assert reference.shape[-1] == 2
-                tmp[..., :2] += reference
-            outputs_coord = tmp.sigmoid()
+            rep_point = rep_points[lvl]
+            tmp = tmp.reshape_as(rep_point)
+
+            assert reference.shape[-1] == 4
+            rep_box = rep_boxes[lvl]
+            new_rep_points = tmp * (rep_box[..., 2:][:, :, None, None, None, :]).detach() + rep_point.detach()
+            outputs_coord = points2box(new_rep_points)
+
             outputs_classes.append(outputs_class)
             outputs_coords.append(outputs_coord)
         outputs_class = torch.stack(outputs_classes)
@@ -204,12 +217,15 @@ class DeformableDETR(nn.Module):
                 reference = inverse_sigmoid(reference)
                 outputs_class_o2m = self.class_embed[lvl](hs_o2m[lvl])
                 tmp = self.bbox_embed[lvl](hs_o2m[lvl])
-                if reference.shape[-1] == 4:
-                    tmp += reference
-                else:
-                    assert reference.shape[-1] == 2
-                    tmp[..., :2] += reference
-                outputs_coord_o2m = tmp.sigmoid()
+
+                rep_point = rep_points[lvl]
+                tmp = tmp.reshape_as(rep_point)
+
+                assert reference.shape[-1] == 4
+                rep_box = rep_boxes[lvl]
+                new_rep_points = tmp * (rep_box[..., 2:][:, :, None, None, None, :]).detach() + rep_point.detach()
+                outputs_coord_o2m = points2box(new_rep_points)
+
                 outputs_classes_o2m.append(outputs_class_o2m)
                 outputs_coords_o2m.append(outputs_coord_o2m)
             outputs_class_o2m = torch.stack(outputs_classes_o2m)
