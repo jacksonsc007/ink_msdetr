@@ -79,7 +79,7 @@ def get_args_parser():
                         help="Number of attention heads inside the transformer's attentions")
     parser.add_argument('--num_queries', default=300, type=int,
                         help="Number of query slots")
-    parser.add_argument('--dec_n_points', default=4, type=int)
+    parser.add_argument('--dec_n_points', default=1, type=int)
     parser.add_argument('--enc_n_points', default=4, type=int)
 
     # * Segmentation
@@ -287,26 +287,6 @@ def main(args):
                                               data_loader_val, base_ds, device, args.output_dir)
         if args.output_dir:
             utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
-
-        # plot results for each image
-        if args.show_dir and utils.is_main_process():
-            accelerator.state.device = "cpu"  # change device to CPU for plot
-            dataset.coco = coco_dt  # load predicted results into data_loader
-            data_loader = create_test_data_loader(
-                dataset, accelerator=accelerator, batch_size=1, num_workers=args.workers
-            )
-            visualize_coco_bounding_boxes(
-                data_loader=data_loader,
-                show_conf=args.show_conf,
-                show_dir=args.show_dir,
-                font_scale=args.font_scale,
-                box_thick=args.box_thick,
-                fill_alpha=args.fill_alpha,
-                text_box_color=args.text_box_color,
-                text_font_color=args.text_font_color,
-                text_alpha=args.text_alpha,
-            )
-
         return
 
     if args.wandb_enabled and utils.is_main_process():

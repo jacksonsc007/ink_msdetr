@@ -1,15 +1,17 @@
 set -e
 coco_path=data/coco
-num_gpus=8
+num_gpus=4
 num_enc_layers=6
 num_dec_layers=6
 dataset=minicoco
-batch_size=2
-device_code=3090x8_1
+batch_size=4
+device_code=3090_1
 backbone=resnet18
-num_queries=100
+num_queries=300
+branch=
+branch=reppoint_v1.1.2_1sttry
 
-exp_code=${device_code}_${dataset}-msdetr_baseline_${backbone}_enc${num_enc_layers}_dec${num_dec_layers}_query${num_queries}-bs${batch_size}x${num_gpus}
+exp_code=${branch}_shortersize_480-${device_code}-${dataset}-${backbone}_enc${num_enc_layers}_dec${num_dec_layers}_query${num_queries}-bs${batch_size}x${num_gpus}
 EXP_DIR=exps/${exp_code}
 
 mkdir -p $EXP_DIR

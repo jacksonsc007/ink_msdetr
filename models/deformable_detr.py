@@ -187,24 +187,26 @@ class DeformableDETR(nn.Module):
                 reference = init_reference
             else:
                 reference = inter_references[lvl - 1]
-            outputs_class = self.class_embed[lvl](hs[lvl])
-            tmp = self.bbox_embed[lvl](hs[lvl])
-            rep_point = rep_points[lvl]
-            tmp = tmp.reshape_as(rep_point)
-
             assert reference.shape[-1] == 4
-            rep_box = rep_boxes[lvl]
-            new_rep_points = tmp * (rep_box[..., 2:][:, :, None, None, None, :]).detach() + rep_point.detach()
-            outputs_coord = points2box(new_rep_points)
+
+            # cls
+            outputs_class = self.class_embed[lvl](hs[lvl])
+            # box
+            tmp = self.bbox_embed[lvl](hs[lvl])
+            rep_point1 = rep_points[lvl]
+            tmp = tmp.reshape_as(rep_point1)
+            rep_point2 = inverse_sigmoid(rep_point1) + tmp
+            rep_point2 = rep_point2.sigmoid()
+            outputs_coord = points2box(rep_point2)
 
             outputs_classes.append(outputs_class)
             outputs_coords.append(outputs_coord)
         outputs_class = torch.stack(outputs_classes)
         outputs_coord = torch.stack(outputs_coords)
 
-        out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1], 'rep_boxes': rep_boxes[-1]}
+        out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
         if self.aux_loss:
-            out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord, rep_boxes)
+            out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
 
         if self.use_ms_detr:
             outputs_classes_o2m = []
@@ -215,16 +217,16 @@ class DeformableDETR(nn.Module):
                 else:
                     reference = inter_references[lvl - 1]
                 reference = inverse_sigmoid(reference)
+                # cls
                 outputs_class_o2m = self.class_embed[lvl](hs_o2m[lvl])
+                # box
                 tmp = self.bbox_embed[lvl](hs_o2m[lvl])
 
-                rep_point = rep_points[lvl]
-                tmp = tmp.reshape_as(rep_point)
-
-                assert reference.shape[-1] == 4
-                rep_box = rep_boxes[lvl]
-                new_rep_points = tmp * (rep_box[..., 2:][:, :, None, None, None, :]).detach() + rep_point.detach()
-                outputs_coord_o2m = points2box(new_rep_points)
+                rep_point1 = rep_points[lvl]
+                tmp = tmp.reshape_as(rep_point1)
+                rep_point2 = inverse_sigmoid(rep_point1) + tmp
+                rep_point2 = rep_point2.sigmoid()
+                outputs_coord_o2m = points2box(rep_point2)
 
                 outputs_classes_o2m.append(outputs_class_o2m)
                 outputs_coords_o2m.append(outputs_coord_o2m)
