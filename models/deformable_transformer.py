@@ -177,9 +177,9 @@ class DeformableTransformer(nn.Module):
                 query_embed, tgt = torch.split(pos_trans_out, c, dim=2)
             else:
                 # tgt: content embedding, query_embed here is the learnable content embedding
-                tgt = query_embed.unsqueeze(0).expand(bs, -1, -1)
-                shared_content_embed = shared_content_embed.view(1, 1, c).expand(*tgt.shape)
-                tgt = tgt + shared_content_embed
+                tgt = query_embed.unsqueeze(0).expand(bs, topk, c)
+                # shared_content_embed = shared_content_embed.view(1, 1, c).expand(*tgt.shape)
+                # tgt = tgt + shared_content_embed
                 # query_embed: position embedding, transformed from the topk proposals
                 query_embed, _ = torch.split(pos_trans_out, c, dim=2)
 
