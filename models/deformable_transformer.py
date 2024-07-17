@@ -127,7 +127,7 @@ class DeformableTransformer(nn.Module):
         valid_ratio = torch.stack([valid_ratio_w, valid_ratio_h], -1)
         return valid_ratio
 
-    def forward(self, srcs, masks, pos_embeds, query_embed=None, **kwargs):
+    def forward(self, srcs, masks, pos_embeds, query_embed=None, shared_content_embed=None, **kwargs):
         assert self.two_stage or query_embed is not None
 
         # prepare input for encoder
@@ -178,6 +178,8 @@ class DeformableTransformer(nn.Module):
             else:
                 # tgt: content embedding, query_embed here is the learnable content embedding
                 tgt = query_embed.unsqueeze(0).expand(bs, -1, -1)
+                shared_content_embed = shared_content_embed.view(1, 1, c).expand(*tgt.shape)
+                tgt = tgt + shared_content_embed
                 # query_embed: position embedding, transformed from the topk proposals
                 query_embed, _ = torch.split(pos_trans_out, c, dim=2)
 

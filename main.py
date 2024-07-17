@@ -247,6 +247,10 @@ def main(args):
         model_without_ddp.detr.load_state_dict(checkpoint['model'])
 
     output_dir = Path(args.output_dir)
+    if args.output_dir and utils.is_main_process():
+        # save model code
+        os.system(f'cp -r models/ {args.output_dir}')
+
     if args.resume:
         if args.resume.startswith('https'):
             checkpoint = torch.hub.load_state_dict_from_url(

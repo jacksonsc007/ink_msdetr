@@ -1,31 +1,33 @@
 set -e
 coco_path=data/coco
-num_gpus=4
+num_gpus=1
 num_enc_layers=6
 num_dec_layers=6
 dataset=minicoco
-batch_size=4
-device_code=3090_1
+batch_size=2
+device_code=homeworkstation
 backbone=resnet18
 num_queries=300
-branch=
-branch=reppoint_v1.1.2_1sttry
+branch=shared_content_query_v1.0
 
-exp_code=${branch}_shortersize_480-${device_code}-${dataset}-${backbone}_enc${num_enc_layers}_dec${num_dec_layers}_query${num_queries}-bs${batch_size}x${num_gpus}
+exp_code=${branch}-shortersize_480-${device_code}-${dataset}-${backbone}_enc${num_enc_layers}_dec${num_dec_layers}_query${num_queries}-bs${batch_size}x${num_gpus}_lr1e-4
 EXP_DIR=exps/${exp_code}
+
 
 mkdir -p $EXP_DIR
 
 GPUS_PER_NODE=$num_gpus ./tools/run_dist_launch.sh $num_gpus python -u main.py \
    --backbone $backbone \
-   --wandb_enabled \
+   --two_stage \
    --batch_size $batch_size \
    --wandb_name ${exp_code} \
+   --wandb_enabled \
+   --lr 1e-4 \
+   --lr_backbone 1e-5 \
    --enc_layers $num_enc_layers \
    --dec_layers $num_dec_layers \
    --output_dir $EXP_DIR \
    --with_box_refine \
-   --two_stage \
    --dim_feedforward 2048 \
    --epochs 12 \
    --lr_drop 11 \
