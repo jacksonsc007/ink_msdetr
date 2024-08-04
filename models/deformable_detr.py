@@ -168,7 +168,7 @@ class DeformableDETR(nn.Module):
             query_embeds = self.query_embed.weight
             # shared_content_embed = self.shared_content_embed.weight
 
-        hs, hs_o2m, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, anchors = self.transformer(srcs, masks, pos, query_embeds)
+        hs, hs_o2m, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, anchors, obj_sims = self.transformer(srcs, masks, pos, query_embeds)
 
         outputs_classes = []
         outputs_coords = []
@@ -192,6 +192,7 @@ class DeformableDETR(nn.Module):
         outputs_coord = torch.stack(outputs_coords)
 
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
+        out['obj_sims'] = obj_sims
         if self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
 
@@ -412,6 +413,17 @@ class SetCriterion(nn.Module):
 
         # Retrieve the matching between the outputs of the last layer and the targets
         indices = self.matcher(outputs_without_aux, targets)
+        
+        # obj_sim_last = outputs['obj_sims'][-1]
+        # bs, num_q = obj_sim_last.shape
+        # if_pos = torch.zeros(num_q, dtype=torch.bool, device=obj_sim_last.device)
+        # for img_id in range(bs):
+        #     pos_q_idx = indices[img_id][0].to(obj_sim_last.device)
+        #     sim = obj_sim_last[img_id]
+        #     if_pos_ = if_pos.scatter(0, pos_q_idx, True)
+        #     pos_sim = sim[if_pos_]
+        #     neg_sim = sim[~if_pos_]
+            
 
         o2o_indices_list.append(indices)
 

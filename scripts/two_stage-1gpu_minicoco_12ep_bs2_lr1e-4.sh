@@ -8,9 +8,10 @@ batch_size=2
 device_code=homeworkstation
 backbone=resnet18
 num_queries=300
-branch=shared_content_query_v1.1
+branch=shared_content_query_v1.1.1_11thtry
+img_size=default_size
 
-exp_code=${branch}-shortersize_480-${device_code}-${dataset}-${backbone}_enc${num_enc_layers}_dec${num_dec_layers}_query${num_queries}-bs${batch_size}x${num_gpus}_lr1e-4
+exp_code=${branch}-${img_size}-${device_code}-${dataset}-${backbone}_enc${num_enc_layers}_dec${num_dec_layers}_query${num_queries}-bs${batch_size}x${num_gpus}_lr1e-4
 EXP_DIR=exps/${exp_code}
 
 
