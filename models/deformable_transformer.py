@@ -1,4 +1,3 @@
-# ------------------------------------------------------------------------
 # Deformable DETR
 # Copyright (c) 2020 SenseTime. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
@@ -287,7 +286,7 @@ class DeformableTransformerDecoderLayer(nn.Module):
         self.norm1 = nn.LayerNorm(d_model)
 
         # self attention
-        self.self_attn = WeightedSelfAttention(d_model, n_heads, dropout=dropout)
+        self.self_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout)
         self.dropout2 = nn.Dropout(dropout)
         self.norm2 = nn.LayerNorm(d_model)
 
@@ -333,6 +332,8 @@ class DeformableTransformerDecoderLayer(nn.Module):
             # cross attention
             tgt2 = self.cross_attn(self.with_pos_embed(tgt, query_pos),
                                    reference_points, src, src_spatial_shapes, level_start_index, src_padding_mask)
+            # if obj_sim is not None:
+            #     tgt2 = tgt2 * obj_sim[:, :, None]
             tgt = tgt + self.dropout1(tgt2)
             tgt = self.norm1(tgt)
 
@@ -344,7 +345,9 @@ class DeformableTransformerDecoderLayer(nn.Module):
 
             # self attention
             q = k = self.with_pos_embed(tgt, query_pos)
-            tgt2 = self.self_attn(q.transpose(0, 1), k.transpose(0, 1), tgt.transpose(0, 1), prior_weight=obj_sim)
+            tgt2 = self.self_attn(q.transpose(0, 1), k.transpose(0, 1), tgt.transpose(0, 1))[0].transpose(0, 1)
+            if obj_sim is not None:
+                tgt2 = tgt2 * obj_sim[:, :, None]
             tgt = tgt + self.dropout2(tgt2)
             tgt = self.norm2(tgt)
 
@@ -388,17 +391,19 @@ class DeformableTransformerDecoder(nn.Module):
         self.obj_linear = nn.Linear(d_model, d_model)
         self.trans_linear = nn.Linear(d_model, d_model)
         self.n_heads = self.layers[0].n_heads 
+        self.activation = nn.ReLU()
+        # self.activation = _get_activation_fn(activation)
 
     def compute_similarity(self, tgt, obj_embed):
         # compute obj-background similarity
-        obj_embed = self.obj_linear(obj_embed)
-        tgt = self.trans_linear(tgt)
+        obj_embed = self.activation(self.obj_linear(obj_embed))
+        tgt = self.activation(self.trans_linear(tgt))
         # sim = tgt @ obj_embed.transpose(-2, -1)
         sim = F.cosine_similarity(tgt, obj_embed, dim=-1)
         # sim = sim * self.sim_scale
         # sim = sim.sigmoid()
         sim = (sim + 1) / 2
-        return sim
+        return sim 
 
     def forward(self, tgt, reference_points, src, src_spatial_shapes, src_level_start_index, src_valid_ratios,
                 query_pos=None, src_padding_mask=None, **kwargs):
@@ -420,10 +425,6 @@ class DeformableTransformerDecoder(nn.Module):
 
             # compute similarity to object query
             obj_sim = self.compute_similarity(output.detach(), self.obj_embed.detach()) 
-
-            # expand obj as predefined attention weight bias
-            bs, num_q, _ = tgt.shape
-            obj_sim = obj_sim[:, None, None, :].repeat(1, self.n_heads, num_q, 1)
 
             # hack implementation for iterative bounding box refinement
             if self.bbox_embed is not None:

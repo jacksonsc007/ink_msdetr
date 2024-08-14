@@ -8,3 +8,6 @@ Object queries for decoder now share the same content query.
 
 ## v1.1.1
 Compute the similarity between query after cross-attention and the learnable query emebed, then use the similarity to weight cross-attention output.
+
+## v1.1.2
+Compute cosine similarity for the output of each decoder layer with the initial shared object query. Use it to modulate self-attention output.
