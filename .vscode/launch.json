@@ -18,7 +18,7 @@
                     "--lr_backbone", "5e-6",
                     // "--backbone", "resnet50",
                     "--backbone", "resnet18",
-                    "--batch_size", "4",
+                    // "--batch_size", "4",
                     "--enc_layers", "6",
                     "--dec_layers", "6",
                     "--output_dir", "output",
@@ -38,6 +38,9 @@
                     "--enc_cls_loss_coef", "2",
                     "--enc_bbox_loss_coef", "5",
                     "--enc_giou_loss_coef", "2",
+
+                //    "--resume", "exps/contrastive_loss_1st_try-default_size-homeworkstation-minicoco-resnet18_enc6_dec6_query300-bs2x1_lr1e-4/checkpoint.pth",
+                //    "--eval",
                  ],
         }
     ]

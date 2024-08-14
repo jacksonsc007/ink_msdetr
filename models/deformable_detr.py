@@ -65,7 +65,7 @@ class DeformableDETR(nn.Module):
         if not two_stage:
             self.query_embed = nn.Embedding(num_queries, hidden_dim*2)
         elif mixed_selection:
-            self.query_embed = nn.Embedding(num_queries, hidden_dim)
+            self.query_embed = nn.Embedding(1, hidden_dim)
         
         if num_feature_levels > 1:
             num_backbone_outs = len(backbone.strides)
@@ -193,6 +193,13 @@ class DeformableDETR(nn.Module):
         if self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
 
+        # for contrastive loss
+        out['obj_embed'] = query_embeds
+        out['hs_o2o'] = hs[-1]
+        for aux, hs_tmp in zip(out['aux_outputs'], hs[:-1]):
+            aux['hs_o2o'] = hs_tmp
+            aux['obj_embed'] = query_embeds
+
         if self.use_ms_detr:
             outputs_classes_o2m = []
             outputs_coords_o2m = []
@@ -262,6 +269,62 @@ class SetCriterion(nn.Module):
         else:
             self.enc_matcher = enc_matcher
         self.matcher_o2m = Stage2Assigner(k=o2m_matcher_k, threshold=o2m_matcher_threshold)
+
+
+    def loss_contrast(self, outputs, targets, indices, num_boxes, scale=1):
+        """Compute contrastive loss between *Shared learnable query* and positives and negatives samples (which aggregates feature from image) """
+        assert 'obj_embed' in outputs
+        assert 'hs_o2o' in outputs
+        hs_o2o = outputs['hs_o2o']
+        bs, n_q, c = hs_o2o.shape
+        obj_embed = outputs['obj_embed']
+        device = obj_embed.device
+
+        # norm obj_embed and hs_o2o
+        obj_embed = F.normalize(obj_embed, dim=1)
+        hs_o2o = F.normalize(hs_o2o, dim=2)
+
+        logits_all = []
+        labels_all = []
+        num_pos_all = [] 
+        for img_id in range(bs):
+            pos_idx = indices[img_id][0].to(device)
+            num_pos = len(pos_idx)
+            if  num_pos == 0:
+                # raise ValueError("No positive samples")
+                continue
+            hs_o2o_ = hs_o2o[img_id]
+            if_pos = torch.full((n_q,), False, device=device)
+            if_pos[pos_idx] = True
+            pos_query = hs_o2o_[if_pos] #(n_pos, c)
+            neg_query = hs_o2o_[~if_pos] #(n_neg, c) 
+
+            pos_logits = torch.mm(pos_query, obj_embed.T)                       
+            neg_logits = torch.mm(neg_query, obj_embed.T)
+            logits = torch.cat([pos_logits, neg_logits], dim=0).view(n_q) # (n_q, 1)
+            logits /= scale
+            labels = torch.zeros(n_q, dtype=logits.dtype, device=device)
+            labels[if_pos] = 1.
+            
+            logits_all.append(logits)
+            labels_all.append(labels)
+            num_pos_all.append(num_pos)
+        if len(num_pos_all) == 0:
+            loss = torch.tensor(0., device=device)
+        else:
+            logits_all = torch.stack(logits_all, 0)
+            labels_all = torch.stack(labels_all, 0)
+            num_pos_all = logits_all.new_tensor(num_pos_all)
+            loss_func = nn.CrossEntropyLoss(reduction='none')
+            loss = loss_func(logits_all, labels_all)
+            # NOTE : to improve when using multi gpus
+            loss = loss / num_pos_all
+            loss = sum(loss) / bs
+        losses = {'loss_contrast': loss}
+        return losses
+
+
+
 
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
@@ -372,7 +435,8 @@ class SetCriterion(nn.Module):
             'labels': self.loss_labels,
             'cardinality': self.loss_cardinality,
             'boxes': self.loss_boxes,
-            'masks': self.loss_masks
+            'masks': self.loss_masks,
+            'contrast': self.loss_contrast,
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
@@ -425,6 +489,9 @@ class SetCriterion(nn.Module):
         for loss in self.losses:
             kwargs = {}
             losses.update(self.get_loss(loss, outputs, targets, indices, num_boxes, **kwargs))
+        
+        # contrast loss
+        losses.update(self.get_loss('contrast', outputs, targets, indices, num_boxes, **kwargs))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:
@@ -442,6 +509,11 @@ class SetCriterion(nn.Module):
                     l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_boxes, **kwargs)
                     l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
                     losses.update(l_dict)
+
+                # contrast loss
+                contrast_loss = self.get_loss('contrast', aux_outputs, targets, indices, num_boxes, **kwargs)
+                contrast_loss = {k + f'_{i}': v for k, v in contrast_loss.items()}
+                losses.update(contrast_loss)
 
         # one-to-many losses
         if 'o2m_outputs' in outputs:
@@ -640,6 +712,8 @@ def build(args):
     enc_matcher = HungarianMatcher(cost_class=0, cost_bbox=args.set_cost_bbox, cost_giou=args.set_cost_giou)
 
     weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_bbox': args.bbox_loss_coef, 'loss_giou': args.giou_loss_coef}
+    # contrast loss
+    weight_dict['loss_contrast'] = 1
     weight_dict.update(
         {'loss_ce_enc': args.enc_cls_loss_coef, 'loss_bbox_enc': args.enc_bbox_loss_coef, 'loss_giou_enc': args.enc_giou_loss_coef}
     )
