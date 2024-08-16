@@ -8,7 +8,7 @@ batch_size=2
 device_code=homeworkstation
 backbone=resnet18
 num_queries=300
-branch=contrastive_loss_2nd_try
+branch=contrastive_loss_6th_try
 img_size=default_size
 
 exp_code=${branch}-${img_size}-${device_code}-${dataset}-${backbone}_enc${num_enc_layers}_dec${num_dec_layers}_query${num_queries}-bs${batch_size}x${num_gpus}_lr1e-4

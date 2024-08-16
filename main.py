@@ -289,9 +289,10 @@ def main(args):
             utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
         return
 
+    writer = None
     if args.wandb_enabled and utils.is_main_process():
         # wandb logger
-        wandb.init(
+        wandb_writer = wandb.init(
             # set the wandb project where this run will be logged
             project="MSDETR",
 
@@ -302,14 +303,16 @@ def main(args):
             },
             name=args.wandb_name
         )
+        writer = wandb_writer
 
     print("Start training")
     start_time = time.time()
+    total_iter = 0
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             sampler_train.set_epoch(epoch)
-        train_stats = train_one_epoch(
-            model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm)
+        train_stats, total_iter = train_one_epoch(
+            model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, writer=writer, total_iter=total_iter)
         lr_scheduler.step()
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']
@@ -354,19 +357,19 @@ def main(args):
                 coco_eval_bbox_metric = test_stats["coco_eval_bbox"]
                 fields = ["AP", "AP50", "AP75", "APs", "APm", "APl", "AR1", "AR10", "AR100", "ARs", "ARm", "ARl"]
                 metric_with_fields = { 
-                    k : v * 100 for k, v in zip( fields, coco_eval_bbox_metric)
+                    "perf/"+k : v * 100 for k, v in zip( fields, coco_eval_bbox_metric)
                 }
-                wandb.log(
+                metric_with_fields.update({"epoch": epoch})
+                wandb_writer.log(
                     metric_with_fields,
-                    step=epoch,
-                    commit=True,
+                    step=total_iter,
                     )
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
     if args.wandb_enabled:
-        wandb.finish()
+        wandb_writer.finish()
 
 
 if __name__ == '__main__':

@@ -122,6 +122,12 @@ class DeformableDETR(nn.Module):
             for box_embed in self.bbox_embed:
                 nn.init.constant_(box_embed.layers[-1].bias.data[2:], 0.0)
 
+        # projection layers for contrast
+        # self.linear1 = nn.Linear(hidden_dim, hidden_dim)
+        # self.linear2 = nn.Linear(hidden_dim, hidden_dim)
+        self.projector1 = MLP(hidden_dim, hidden_dim, hidden_dim, 2)
+        self.projector2 = MLP(hidden_dim, hidden_dim, hidden_dim, 2)
+
     def forward(self, samples: NestedTensor):
         """The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
@@ -192,13 +198,18 @@ class DeformableDETR(nn.Module):
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
         if self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
+        # =========================================== for contrastive loss =================================================================
+        # obj_embed = F.relu(self.linear1(query_embeds))
+        # hs = F.relu(self.linear2(hs.detach()))
+        obj_embed = self.projector1(query_embeds)
+        hs = self.projector2(hs.detach())
 
-        # for contrastive loss
-        out['obj_embed'] = query_embeds
+        out['obj_embed'] = obj_embed
         out['hs_o2o'] = hs[-1]
         for aux, hs_tmp in zip(out['aux_outputs'], hs[:-1]):
             aux['hs_o2o'] = hs_tmp
-            aux['obj_embed'] = query_embeds
+            aux['obj_embed'] = obj_embed
+        # ============================================================================================================
 
         if self.use_ms_detr:
             outputs_classes_o2m = []
@@ -285,6 +296,8 @@ class SetCriterion(nn.Module):
         hs_o2o = F.normalize(hs_o2o, dim=2)
 
         logits_all = []
+        pos_logits_all = []
+        neg_logits_all = []
         labels_all = []
         num_pos_all = [] 
         for img_id in range(bs):
@@ -306,12 +319,22 @@ class SetCriterion(nn.Module):
             labels = torch.zeros(n_q, dtype=logits.dtype, device=device)
             labels[if_pos] = 1.
             
+            pos_logits_all.append(pos_logits)
+            neg_logits_all.append(neg_logits)
             logits_all.append(logits)
             labels_all.append(labels)
             num_pos_all.append(num_pos)
         if len(num_pos_all) == 0:
-            loss = torch.tensor(0., device=device)
+            # TODO improve
+            print('Warning: no positive samples in the batch, do not use contrastive loss')
+            # loss = torch.tensor(0., device=device)
+            # this is a hack when no positives in the training batch, in order to avoid pytorch warning of some parameters are not used in loss calculation.
+            loss = 0 * (hs_o2o.sum() + obj_embed.sum())
+            pos_sim = hs_o2o.new_tensor(0.)
+            neg_sim = hs_o2o.new_tensor(0.)
         else:
+            pos_logits_all = torch.cat(pos_logits_all, 0)
+            neg_logits_all = torch.cat(neg_logits_all, 0)
             logits_all = torch.stack(logits_all, 0)
             labels_all = torch.stack(labels_all, 0)
             num_pos_all = logits_all.new_tensor(num_pos_all)
@@ -320,7 +343,12 @@ class SetCriterion(nn.Module):
             # NOTE : to improve when using multi gpus
             loss = loss / num_pos_all
             loss = sum(loss) / bs
-        losses = {'loss_contrast': loss}
+            
+            pos_sim = pos_logits_all.mean()
+            neg_sim = neg_logits_all.mean()
+        losses = {  'loss_contrast': loss,
+                    'pos_sim': pos_sim,
+                    'neg_sim': neg_sim}
         return losses
 
 
@@ -468,6 +496,10 @@ class SetCriterion(nn.Module):
              targets: list of dicts, such that len(targets) == batch_size.
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
+        for tgt in targets:
+            if len(tgt['boxes']) == 0:
+                img_id = tgt['image_id'].item()
+                print(f"warning: image_{img_id}  has no gt targets")
         outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs' and k != 'enc_outputs'}
         # store one-to-one indices for indices merge
         o2o_indices_list = []
@@ -490,8 +522,9 @@ class SetCriterion(nn.Module):
             kwargs = {}
             losses.update(self.get_loss(loss, outputs, targets, indices, num_boxes, **kwargs))
         
-        # contrast loss
+        # =========================================== for contrastive loss =================================================================
         losses.update(self.get_loss('contrast', outputs, targets, indices, num_boxes, **kwargs))
+
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:
@@ -510,7 +543,7 @@ class SetCriterion(nn.Module):
                     l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
                     losses.update(l_dict)
 
-                # contrast loss
+                # =========================================== for contrastive loss =================================================================
                 contrast_loss = self.get_loss('contrast', aux_outputs, targets, indices, num_boxes, **kwargs)
                 contrast_loss = {k + f'_{i}': v for k, v in contrast_loss.items()}
                 losses.update(contrast_loss)
@@ -713,7 +746,7 @@ def build(args):
 
     weight_dict = {'loss_ce': args.cls_loss_coef, 'loss_bbox': args.bbox_loss_coef, 'loss_giou': args.giou_loss_coef}
     # contrast loss
-    weight_dict['loss_contrast'] = 1
+    weight_dict['loss_contrast'] = 0.1
     weight_dict.update(
         {'loss_ce_enc': args.enc_cls_loss_coef, 'loss_bbox_enc': args.enc_bbox_loss_coef, 'loss_giou_enc': args.enc_giou_loss_coef}
     )

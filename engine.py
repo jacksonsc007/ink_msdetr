@@ -24,7 +24,7 @@ from datasets.data_prefetcher import data_prefetcher
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
-                    device: torch.device, epoch: int, max_norm: float = 0):
+                    device: torch.device, epoch: int, max_norm: float = 0, writer=None, total_iter=None):
     model.train()
     criterion.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -32,7 +32,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
     metric_logger.add_meter('grad_norm', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
     header = 'Epoch: [{}]'.format(epoch)
-    print_freq = 50
+    print_freq = 500
 
     prefetcher = data_prefetcher(data_loader, device, prefetch=True)
     samples, targets = prefetcher.next()
@@ -72,11 +72,28 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(grad_norm=grad_total_norm)
 
+        # wandb logger
+        log_freq = 100
+        if total_iter % (log_freq) == 0 and utils.is_main_process() and writer is not None:
+            writer.log({'train/loss': loss_value}, total_iter, commit=None)
+            writer.log({'train/class_error': loss_dict_reduced['class_error']}, total_iter, commit=None)
+            writer.log({'lr': optimizer.param_groups[0]["lr"]}, total_iter, commit=None)
+            writer.log({'train/grad_norm': grad_total_norm}, total_iter, commit=None)
+            for key, value in loss_dict_reduced_scaled.items():
+                writer.log({'train/'+key: value}, total_iter, commit=None)
+            for key, value in loss_dict_reduced_unscaled.items():
+                if "corr" in key:
+                    writer.log({'train/'+key: value}, total_iter, commit=None)
+                if "sim" in key:
+                    writer.log({'similarity/'+key: value}, total_iter, commit=None)
+
+        total_iter += 1
+
         samples, targets = prefetcher.next()
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}, total_iter
 
 
 @torch.no_grad()
@@ -100,7 +117,8 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
             output_dir=os.path.join(output_dir, "panoptic_eval"),
         )
 
-    for samples, targets in metric_logger.log_every(data_loader, 10, header):
+    print_freq = 100 
+    for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
