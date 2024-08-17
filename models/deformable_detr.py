@@ -123,10 +123,10 @@ class DeformableDETR(nn.Module):
                 nn.init.constant_(box_embed.layers[-1].bias.data[2:], 0.0)
 
         # projection layers for contrast
-        # self.linear1 = nn.Linear(hidden_dim, hidden_dim)
-        # self.linear2 = nn.Linear(hidden_dim, hidden_dim)
-        self.projector1 = MLP(hidden_dim, hidden_dim, hidden_dim, 2)
-        self.projector2 = MLP(hidden_dim, hidden_dim, hidden_dim, 2)
+        self.linear1 = nn.Linear(hidden_dim, hidden_dim)
+        self.linear2 = nn.Linear(hidden_dim, hidden_dim)
+        # self.projector1 = MLP(hidden_dim, hidden_dim, hidden_dim, 2)
+        # self.projector2 = MLP(hidden_dim, hidden_dim, hidden_dim, 2)
 
     def forward(self, samples: NestedTensor):
         """The forward expects a NestedTensor, which consists of:
@@ -199,10 +199,10 @@ class DeformableDETR(nn.Module):
         if self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
         # =========================================== for contrastive loss =================================================================
-        # obj_embed = F.relu(self.linear1(query_embeds))
-        # hs = F.relu(self.linear2(hs.detach()))
-        obj_embed = self.projector1(query_embeds)
-        hs = self.projector2(hs.detach())
+        obj_embed = F.relu(self.linear1(query_embeds))
+        hs = F.relu(self.linear2(hs.detach()))
+        # obj_embed = self.projector1(query_embeds)
+        # hs = self.projector2(hs.detach())
 
         out['obj_embed'] = obj_embed
         out['hs_o2o'] = hs[-1]
@@ -295,11 +295,13 @@ class SetCriterion(nn.Module):
         obj_embed = F.normalize(obj_embed, dim=1)
         hs_o2o = F.normalize(hs_o2o, dim=2)
 
-        logits_all = []
+        # logits_all = []
         pos_logits_all = []
         neg_logits_all = []
-        labels_all = []
+        # labels_all = []
         num_pos_all = [] 
+        loss_func = nn.CrossEntropyLoss(reduction='none')
+        loss_all = []
         for img_id in range(bs):
             pos_idx = indices[img_id][0].to(device)
             num_pos = len(pos_idx)
@@ -314,15 +316,20 @@ class SetCriterion(nn.Module):
 
             pos_logits = torch.mm(pos_query, obj_embed.T)                       
             neg_logits = torch.mm(neg_query, obj_embed.T)
-            logits = torch.cat([pos_logits, neg_logits], dim=0).view(n_q) # (n_q, 1)
-            logits /= scale
-            labels = torch.zeros(n_q, dtype=logits.dtype, device=device)
-            labels[if_pos] = 1.
-            
             pos_logits_all.append(pos_logits)
             neg_logits_all.append(neg_logits)
-            logits_all.append(logits)
-            labels_all.append(labels)
+
+            pos_logits = pos_logits.view(num_pos, 1)
+            neg_logits = neg_logits.view(1, -1).repeat(num_pos, 1) # (num_pos, num_neg)
+            logits = torch.cat([pos_logits, neg_logits], dim=1) # (num_pos, num_neg+1)
+            logits /= scale
+            labels = torch.zeros(num_pos, dtype=torch.long, device=device)
+            loss = loss_func(logits, labels)
+            loss = loss.sum() / num_pos
+
+            loss_all.append(loss) 
+            # logits_all.append(logits)
+            # labels_all.append(labels)
             num_pos_all.append(num_pos)
         if len(num_pos_all) == 0:
             # TODO improve
@@ -335,14 +342,13 @@ class SetCriterion(nn.Module):
         else:
             pos_logits_all = torch.cat(pos_logits_all, 0)
             neg_logits_all = torch.cat(neg_logits_all, 0)
-            logits_all = torch.stack(logits_all, 0)
-            labels_all = torch.stack(labels_all, 0)
-            num_pos_all = logits_all.new_tensor(num_pos_all)
-            loss_func = nn.CrossEntropyLoss(reduction='none')
-            loss = loss_func(logits_all, labels_all)
+            # logits_all = torch.stack(logits_all, 0)
+            # labels_all = torch.stack(labels_all, 0)
+            # num_pos_all = logits_all.new_tensor(num_pos_all)
+            # loss = loss_func(logits_all, labels_all)
             # NOTE : to improve when using multi gpus
-            loss = loss / num_pos_all
-            loss = sum(loss) / bs
+            # loss = loss / num_pos_all
+            loss = sum(loss_all) / bs
             
             pos_sim = pos_logits_all.mean()
             neg_sim = neg_logits_all.mean()
