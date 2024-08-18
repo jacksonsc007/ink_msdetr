@@ -73,7 +73,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         metric_logger.update(grad_norm=grad_total_norm)
 
         # wandb logger
-        log_freq = 100
+        log_freq = 500
         if total_iter % (log_freq) == 0 and utils.is_main_process() and writer is not None:
             writer.log({'train/loss': loss_value}, total_iter, commit=None)
             writer.log({'train/class_error': loss_dict_reduced['class_error']}, total_iter, commit=None)
