@@ -1,3 +1,4 @@
+# ------------------------------------------------------------------------
 # Deformable DETR
 # Copyright (c) 2020 SenseTime. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
@@ -126,7 +127,7 @@ class DeformableTransformer(nn.Module):
         valid_ratio = torch.stack([valid_ratio_w, valid_ratio_h], -1)
         return valid_ratio
 
-    def forward(self, srcs, masks, pos_embeds, query_embed=None, shared_content_embed=None, **kwargs):
+    def forward(self, srcs, masks, pos_embeds, query_embed=None, **kwargs):
         assert self.two_stage or query_embed is not None
 
         # prepare input for encoder
@@ -176,10 +177,7 @@ class DeformableTransformer(nn.Module):
                 query_embed, tgt = torch.split(pos_trans_out, c, dim=2)
             else:
                 # tgt: content embedding, query_embed here is the learnable content embedding
-                self.decoder.obj_embed = query_embed
-                tgt = query_embed.unsqueeze(0).expand(bs, topk, c)
-                # shared_content_embed = shared_content_embed.view(1, 1, c).expand(*tgt.shape)
-                # tgt = tgt + shared_content_embed
+                tgt = query_embed.unsqueeze(0).expand(bs, topk, -1)
                 # query_embed: position embedding, transformed from the topk proposals
                 query_embed, _ = torch.split(pos_trans_out, c, dim=2)
 
@@ -191,12 +189,12 @@ class DeformableTransformer(nn.Module):
             init_reference_out = reference_points
 
         # decoder
-        hs_o2o, hs_o2m, inter_references, obj_sims = self.decoder(tgt, reference_points, memory,
+        hs_o2o, hs_o2m, inter_references = self.decoder(tgt, reference_points, memory,
                                             spatial_shapes, level_start_index, valid_ratios, query_embed, mask_flatten, **kwargs)
 
         inter_references_out = inter_references
         if self.two_stage:
-            return hs_o2o, hs_o2m, init_reference_out, inter_references_out, enc_outputs_class, enc_outputs_coord_unact, output_proposals.sigmoid(), obj_sims
+            return hs_o2o, hs_o2m, init_reference_out, inter_references_out, enc_outputs_class, enc_outputs_coord_unact, output_proposals.sigmoid(),
         return hs_o2o, hs_o2m, init_reference_out, inter_references_out, None, None, None,
 
 
@@ -277,8 +275,7 @@ class DeformableTransformerDecoderLayer(nn.Module):
                  dropout=0.1, activation="relu",
                  n_levels=4, n_heads=8, n_points=4, use_ms_detr=False, use_aux_ffn=True):
         super().__init__()
-        self.d_model = d_model
-        self.n_heads = n_heads
+
         # cross attention
         self.cross_attn = MSDeformAttn(d_model, n_levels, n_heads, n_points)
         self.dropout1 = nn.Dropout(dropout)
@@ -308,7 +305,6 @@ class DeformableTransformerDecoderLayer(nn.Module):
             self.dropout6 = nn.Dropout(dropout)
             self.norm4 = nn.LayerNorm(d_model)
 
-
     @staticmethod
     def with_pos_embed(tensor, pos):
         return tensor if pos is None else tensor + pos
@@ -325,14 +321,11 @@ class DeformableTransformerDecoderLayer(nn.Module):
         tgt = self.norm4(tgt)
         return tgt
 
-
-    def forward(self, tgt, query_pos, reference_points, src, src_spatial_shapes, level_start_index, src_padding_mask=None, obj_sim=None):
+    def forward(self, tgt, query_pos, reference_points, src, src_spatial_shapes, level_start_index, src_padding_mask=None):
         if self.use_ms_detr:
             # cross attention
             tgt2 = self.cross_attn(self.with_pos_embed(tgt, query_pos),
                                    reference_points, src, src_spatial_shapes, level_start_index, src_padding_mask)
-            # if obj_sim is not None:
-            #     tgt2 = tgt2 * obj_sim[:, :, None]
             tgt = tgt + self.dropout1(tgt2)
             tgt = self.norm1(tgt)
 
@@ -345,8 +338,6 @@ class DeformableTransformerDecoderLayer(nn.Module):
             # self attention
             q = k = self.with_pos_embed(tgt, query_pos)
             tgt2 = self.self_attn(q.transpose(0, 1), k.transpose(0, 1), tgt.transpose(0, 1))[0].transpose(0, 1)
-            if obj_sim is not None:
-                tgt2 = tgt2 * obj_sim[:, :, None]
             tgt = tgt + self.dropout2(tgt2)
             tgt = self.norm2(tgt)
 
@@ -369,7 +360,7 @@ class DeformableTransformerDecoderLayer(nn.Module):
             # ffn
             tgt_o2o = tgt_o2m = self.forward_ffn(tgt)
         
-        return tgt_o2o, tgt_o2m 
+        return tgt_o2o, tgt_o2m
 
 
 class DeformableTransformerDecoder(nn.Module):
@@ -384,22 +375,6 @@ class DeformableTransformerDecoder(nn.Module):
         self.look_forward_twice = look_forward_twice
         self.use_ms_detr = use_ms_detr
 
-        # obj-background similarity
-
-        self.n_heads = self.layers[0].n_heads 
-
-    @torch.no_grad()
-    def compute_similarity(self, tgt, obj_embed):
-        # compute obj-background similarity
-        obj_embed = F.relu(self.linear1(obj_embed))
-        tgt = F.relu(self.linear2(tgt))
-        # sim = tgt @ obj_embed.transpose(-2, -1)
-        sim = F.cosine_similarity(tgt, obj_embed, dim=-1)
-        # sim = sim * self.sim_scale
-        # sim = sim.sigmoid()
-        sim = (sim + 1) / 2
-        return sim 
-
     def forward(self, tgt, reference_points, src, src_spatial_shapes, src_level_start_index, src_valid_ratios,
                 query_pos=None, src_padding_mask=None, **kwargs):
         output = tgt
@@ -407,8 +382,6 @@ class DeformableTransformerDecoder(nn.Module):
         intermediate = []
         intermediate_o2m = []
         intermediate_reference_points = []
-        obj_sims = []
-        obj_sim = None
         for lid, layer in enumerate(self.layers):
             if reference_points.shape[-1] == 4:
                 reference_points_input = reference_points[:, :, None] \
@@ -416,10 +389,7 @@ class DeformableTransformerDecoder(nn.Module):
             else:
                 assert reference_points.shape[-1] == 2
                 reference_points_input = reference_points[:, :, None] * src_valid_ratios[:, None]
-            output, output_o2m = layer(output, query_pos, reference_points_input, src, src_spatial_shapes, src_level_start_index, src_padding_mask, obj_sim=obj_sim, **kwargs)
-
-            # compute similarity to object query
-            obj_sim = self.compute_similarity(output.detach(), self.obj_embed.detach()) 
+            output, output_o2m = layer(output, query_pos, reference_points_input, src, src_spatial_shapes, src_level_start_index, src_padding_mask, **kwargs)
 
             # hack implementation for iterative bounding box refinement
             if self.bbox_embed is not None:
@@ -442,10 +412,9 @@ class DeformableTransformerDecoder(nn.Module):
                     if self.look_forward_twice
                     else reference_points
                 )
-                obj_sims.append(obj_sim)
 
         if self.return_intermediate:
-            return torch.stack(intermediate), torch.stack(intermediate_o2m), torch.stack(intermediate_reference_points), torch.stack(obj_sims)
+            return torch.stack(intermediate), torch.stack(intermediate_o2m), torch.stack(intermediate_reference_points)
 
         return output, output_o2m, reference_points
 
@@ -485,18 +454,3 @@ def build_deforamble_transformer(args):
         use_ms_detr=args.use_ms_detr,
         use_aux_ffn=args.use_aux_ffn,
     )
-
-class MLP(nn.Module):
-    """ Very simple multi-layer perceptron (also called FFN)"""
-
-    def __init__(self, input_dim, hidden_dim, output_dim, num_layers):
-        super().__init__()
-        self.num_layers = num_layers
-        h = [hidden_dim] * (num_layers - 1)
-        self.layers = nn.ModuleList(nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim]))
-
-    def forward(self, x):
-        for i, layer in enumerate(self.layers):
-            x = F.relu(layer(x)) if i < self.num_layers - 1 else layer(x)
-        return x
-    

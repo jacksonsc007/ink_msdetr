@@ -8,10 +8,17 @@ Use linear+relu for projection.
 Use linear+relu+linear for projection.
 
 7th try:
-change the constrast loss formulation.
+Based on 5th try change the constrast loss formulation.
 
 8th try:
 Based on 5th try, modify the value of scale from 1 to 0.1 .
 
 9th try:
 Based on 6th try, modify the value of scale from 1 to 0.1 .
+
+10th try:
+Based on 6th trym modify the contrast loss formulation. Do not detach gradient.
+```python
+        obj_embed = self.projector1(query_embeds)
+        hs = self.projector2(hs)
+```
