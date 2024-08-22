@@ -22,3 +22,6 @@ Based on 6th trym modify the contrast loss formulation. Do not detach gradient.
         obj_embed = self.projector1(query_embeds)
         hs = self.projector2(hs)
 ```
+
+11th try:
+Based on 10th, the contrast loss is computed among all images within the batch, which means that negatives from other images also serves as *contrast samples* for the current image's certain positive sample. 

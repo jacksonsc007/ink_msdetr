@@ -319,42 +319,60 @@ class SetCriterion(nn.Module):
             pos_logits_all.append(pos_logits)
             neg_logits_all.append(neg_logits)
 
-            pos_logits = pos_logits.view(num_pos, 1)
-            neg_logits = neg_logits.view(1, -1).repeat(num_pos, 1) # (num_pos, num_neg)
-            logits = torch.cat([pos_logits, neg_logits], dim=1) # (num_pos, num_neg+1)
-            logits /= scale
-            labels = torch.zeros(num_pos, dtype=torch.long, device=device)
-            loss = loss_func(logits, labels)
-            loss = loss.sum() / num_pos
+            # pos_logits = pos_logits.view(num_pos, 1)
+            # neg_logits = neg_logits.view(1, -1).repeat(num_pos, 1) # (num_pos, num_neg)
 
-            loss_all.append(loss) 
+            # logits = torch.cat([pos_logits, neg_logits], dim=1) # (num_pos, num_neg+1)
+            # logits /= scale
+            # labels = torch.zeros(num_pos, dtype=torch.long, device=device)
+            # loss = loss_func(logits, labels)
+            # loss = loss.sum() / num_pos
+
+            # loss_all.append(loss) 
             # logits_all.append(logits)
             # labels_all.append(labels)
             num_pos_all.append(num_pos)
-        if len(num_pos_all) == 0:
+        num_batch_pos = sum(num_pos_all)
+        if  num_batch_pos == 0:
             # TODO improve
             print('Warning: no positive samples in the batch, do not use contrastive loss')
             # loss = torch.tensor(0., device=device)
             # this is a hack when no positives in the training batch, in order to avoid pytorch warning of some parameters are not used in loss calculation.
             loss = 0 * (hs_o2o.sum() + obj_embed.sum())
-            pos_sim = hs_o2o.new_tensor(0.)
-            neg_sim = hs_o2o.new_tensor(0.)
+            pos_sim_mean = hs_o2o.new_tensor(0.)
+            neg_sim_mean = hs_o2o.new_tensor(0.)
+            pos_sim_min = hs_o2o.new_tensor(0.)
+            neg_sim_max = hs_o2o.new_tensor(0.)
         else:
-            pos_logits_all = torch.cat(pos_logits_all, 0)
+            pos_logits_all = torch.cat(pos_logits_all, 0) # (num_batch_pos, 1)
             neg_logits_all = torch.cat(neg_logits_all, 0)
+            pos_sim_mean = pos_logits_all.mean()
+            neg_sim_mean = neg_logits_all.mean()
+            pos_sim_min = pos_logits_all.min()
+            neg_sim_max = neg_logits_all.max()
+            
+            neg_logits_all = neg_logits_all.view(1, -1).repeat(num_batch_pos, 1) # (num_batch_pos, num_batch_neg)
+            logits = torch.cat([pos_logits_all, neg_logits_all], dim=1) # (num_pos, num_neg+1)
+            logits /= scale
+            labels = torch.zeros(num_batch_pos, dtype=torch.long, device=device)
+            loss = loss_func(logits, labels)
+            loss = loss.sum() / num_batch_pos
+            # loss /= bs
+
+
             # logits_all = torch.stack(logits_all, 0)
             # labels_all = torch.stack(labels_all, 0)
             # num_pos_all = logits_all.new_tensor(num_pos_all)
             # loss = loss_func(logits_all, labels_all)
             # NOTE : to improve when using multi gpus
             # loss = loss / num_pos_all
-            loss = sum(loss_all) / bs
+            # loss = sum(loss_all) / bs
             
-            pos_sim = pos_logits_all.mean()
-            neg_sim = neg_logits_all.mean()
         losses = {  'loss_contrast': loss,
-                    'pos_sim': pos_sim,
-                    'neg_sim': neg_sim}
+                    'pos_sim_mean': pos_sim_mean,
+                    'neg_sim_mean': neg_sim_mean,
+                    'pos_sim_min': pos_sim_min,
+                    'neg_sim_max': neg_sim_max}
         return losses
 
 
